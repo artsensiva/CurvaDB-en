@@ -1,71 +1,86 @@
-
-*~
+# Python
+__pycache__/
+*.py[cod]
 *$py.class
-# Benchmarks
-benchmarks/results/*.csv
-benchmarks/results/*.json
-benchmarks/results/*.png
+*.so
+.Python
 build/
-.cache/
-.coverage
-*.csv
-data/
-# Data
-# Database files
-datasets/
-*.db
 develop-eggs/
 dist/
 downloads/
-.DS_Store
-*.egg
-*.egg-info/
 eggs/
-env/
-ENV/
-htmlcov/
-.hypothesis/
-.idea/
-# IDEs
-.installed.cfg
-*.ipynb
-.ipynb_checkpoints/
-*.json
-# Jupyter
+.eggs/
 lib/
 lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Database files
 *.lmdb
 *.lmdb-lock
-*.log
-logs/
-# Logs
-MANIFEST
+*.db
+*.sqlite
+*.rocksdb/
+
 # Model cache
 models/
-# OS
-parts/
-*.pickle
+.cache/
 *.pkl
-__pycache__/
-*.py[cod]
-.pytest_cache/
-# Python
-!requirements.txt
-*.rocksdb/
-sdist/
-*.so
-*.sqlite
-*.swo
-*.swp
-temp/
-# Temporary
-# Testing
-Thumbs.db
-tmp/
-.tox/
+*.pickle
+
+# Logs
+*.log
+logs/
+
+# Benchmarks
+benchmarks/results/*.json
+benchmarks/results/*.csv
+benchmarks/results/*.png
+
+# Data
+data/
+datasets/
+*.csv
+*.json
 *.txt
-var/
-venv/
-# Virtual Environment
-.vscode/
-wheels/
+!requirements.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary
+tmp/
+temp/
+*.tmp

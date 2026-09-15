@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -49,7 +50,12 @@ def fit(track, tol: float = DEFAULT_TOL, max_iter: int = MAX_ITER) -> SplineFit:
     k = DEGREE
 
     def try_fit(s: float):
-        tck, _ = splprep([x, y], u=u, k=k, s=s)
+        # FITPACK иногда не сходится к целевому fp=s за отведённые итерации
+        # для конкретного пробного s из нашего поиска — это его внутренний
+        # критерий, а не наш; мы всё равно валидируем итоговую ошибку сами.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            tck, _ = splprep([x, y], u=u, k=k, s=s)
         return tck, _max_error(x, y, u, tck)
 
     tck0, err0 = try_fit(0.0)

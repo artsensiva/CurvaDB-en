@@ -9,19 +9,22 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, os.path.dirname(__file__))
 
 from traj.clean import BEIJING_BBOX, MAX_DT_S, MAX_SPEED_MPS, load_clean_tracks  # noqa: E402
+from _report_utils import upsert_section  # noqa: E402
 
 SEED = 42
 N_TRACKS = 200
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 OUT_MD = os.path.join(RESULTS_DIR, "step1.md")
+TITLE = "# Step 1: чистка данных, честный фиттинг сплайна, A/B\n"
+SECTION_HEADER = "## 1. Чистка треков"
 
 
 def _section_md(stats) -> str:
     lines = [
-        "# Step 1: чистка данных, честный фиттинг сплайна, A/B\n",
-        "## 1. Чистка треков\n",
+        f"{SECTION_HEADER}\n",
         (
             f"Параметры: разрыв по времени > {MAX_DT_S:.0f}с ИЛИ скорость > "
             f"{MAX_SPEED_MPS:.0f} м/с — резать; одиночные точки-сегменты — "
@@ -55,8 +58,10 @@ def main() -> None:
     )
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    with open(OUT_MD, "w") as f:
-        f.write(_section_md(stats))
+    if not os.path.exists(OUT_MD):
+        with open(OUT_MD, "w") as f:
+            f.write(TITLE + "\n")
+    upsert_section(OUT_MD, SECTION_HEADER, _section_md(stats))
     print(f"\nwrote {OUT_MD}")
 
 

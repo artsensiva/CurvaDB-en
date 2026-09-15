@@ -2,6 +2,8 @@
 
 An experimental database that uses mathematical curves and space-filling curve indexing for semantic search, exploring whether curve-based representations can outperform traditional vector databases.
 
+!!! посмотри https://github.com/artsensiva/CurvaDB/blob/main/suggestions_denkweg
+
 ## Overview
 
 **CurvaDB** represents documents as mathematical curves instead of static vectors, using:

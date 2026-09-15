@@ -103,6 +103,17 @@ def dense_check(track, spline: SplineFit, pts_per_interval: int = PTS_PER_INTERV
     return max_error, per_interval_max
 
 
+def dense_max_error(
+    t: np.ndarray, xy: np.ndarray, tck: tuple, mode: str = "time", pts_per_interval: int = PTS_PER_INTERVAL
+) -> float:
+    """max точка-отрезок ошибка на густой сетке для произвольного tck
+    (например, из make_lsq_spline) относительно точек (t, xy) -- та же
+    метрика, что использует fit()/dense_check(), но без внутренней
+    логики подбора (densify/рост s)."""
+    per_interval_max, _ = _dense_scan(np.asarray(t, dtype=float), np.asarray(xy, dtype=float), tck, mode, pts_per_interval)
+    return float(per_interval_max.max()) if len(per_interval_max) else 0.0
+
+
 def fit(
     track,
     tol: float = DEFAULT_TOL,

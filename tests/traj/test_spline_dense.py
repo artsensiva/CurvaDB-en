@@ -2,15 +2,10 @@
 соседними точками, а не только в самих точках (см. src/traj/spline.py,
 benchmarks/results/step0_diagnostics.md)."""
 
-import os
-import sys
-
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-
-from traj.io import Track  # noqa: E402
-from traj.spline import dense_check, fit  # noqa: E402
+from traj.io import Track
+from traj.spline import dense_check, fit
 
 TOL = 10.0
 

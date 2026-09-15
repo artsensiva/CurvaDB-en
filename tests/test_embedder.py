@@ -2,9 +2,8 @@
 
 import pytest
 import numpy as np
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+pytest.importorskip("sentence_transformers", reason="legacy level1 dep не установлен в venv")
 
 from level1.embedder import TextEmbedder
 

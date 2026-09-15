@@ -25,7 +25,7 @@ venv/bin/python benchmarks/step0.py
 и `benchmarks/results/step0.csv`.
 
 ```bash
-venv/bin/pytest tests/traj/ -o addopts=""
+venv/bin/pytest tests/traj/
 ```
 
 ## Результаты (step0, 200 треков, tol = 10 м)

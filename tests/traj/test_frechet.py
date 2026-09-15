@@ -1,13 +1,8 @@
 """Тесты дискретной метрики Фреше."""
 
-import os
-import sys
-
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-
-from traj.frechet import distance, distance_within, lower_bound  # noqa: E402
+from traj.frechet import distance, distance_within, lower_bound
 
 
 def test_identical_is_zero():

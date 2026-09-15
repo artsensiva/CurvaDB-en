@@ -1,14 +1,9 @@
 """Тесты фиттинга сплайна: ошибка аппроксимации <= tol."""
 
-import os
-import sys
-
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-
-from traj.io import Track  # noqa: E402
-from traj.spline import fit  # noqa: E402
+from traj.io import Track
+from traj.spline import fit
 
 
 def _synthetic_track(n: int = 80, seed: int = 0) -> Track:

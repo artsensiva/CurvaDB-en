@@ -1,7 +1,7 @@
-"""Смоук-тесты LSQ-сплайна (src/traj/spline_lsq.py): фиттер истинной
-кривой без привязки к ломаной -- честная ошибка это прямой остаток в
-точках (fit_uniform/fit_adaptive) или ошибка на густой сетке относительно
-истины (fit_oracle)."""
+"""Smoke tests for the LSQ spline (src/traj/spline_lsq.py): a ground-truth
+curve fitter with no tethering to the polyline -- the honest error is the
+direct residual at the points (fit_uniform/fit_adaptive) or the error on a
+dense grid against the ground truth (fit_oracle)."""
 
 import numpy as np
 
@@ -36,8 +36,9 @@ def test_fit_adaptive_reaches_generous_tol():
 
 
 def test_bisection_is_minimal_ish():
-    """Более жёсткий tol не должен давать МЕНЬШЕ контрольных точек, чем
-    более мягкий (бисекция ищет минимум m, но задача монотонно труднее)."""
+    """A tighter tol must not yield FEWER control points than a looser one
+    (bisection searches for a minimal m, but the problem is monotonically
+    harder)."""
     track = _noisy_arc_track()
     loose = fit_uniform(track, tol=10.0)
     tight = fit_uniform(track, tol=2.0)
@@ -67,9 +68,9 @@ def test_straight_line_needs_no_internal_knots():
 
 
 def test_unreachable_tol_reports_not_converged():
-    """При очень жёстком tol на зашумлённых данных фиттер честно не
-    сходится (не подгоняет под предел числом узлов, см. ограничение
-    m_max в _bisect_fit) -- отрицательный результат допустим."""
+    """At a very tight tol on noisy data, the fitter honestly fails to
+    converge (it doesn't force it via the knot count, see the m_max cap
+    in _bisect_fit) -- a negative result is acceptable here."""
     track = _noisy_arc_track(n=60, noise_std=3.0)
     sp = fit_uniform(track, tol=1e-6)
     assert not sp.converged

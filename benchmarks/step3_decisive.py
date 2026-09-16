@@ -1,29 +1,29 @@
-"""Step3, п.2: решающий эксперимент -- LSQ-сплайн (равномерные и
-адаптивные узлы, src/traj/spline_lsq.py) против DP+SED на синтетике
-step2 (дорожная геометрия: прямые + клотоидные повороты) ПЛЮС
-переменная скорость (разгоны/торможения/остановки), при разных шагах
-наблюдений dt.
+"""Step3, item 2: the decisive experiment -- the LSQ spline (uniform and
+adaptive knots, src/traj/spline_lsq.py) against DP+SED on step2's
+synthetic data (road geometry: straights + clothoid turns) PLUS variable
+speed (acceleration/braking/stops), across different observation step
+sizes dt.
 
-Честность подбора параметров -- как в step2_crossover.py: целевой tol не
-передаётся методам напрямую, для каждого метода перебирается его
-собственный внутренний параметр (tol на зашумлённых точках), честная
-ошибка -- max отклонение реконструкции от ИСТИННОЙ (бесшумной) кривой на
-густой сетке. В отличие от step2 (лог-сетка из N_INTERNAL_GRID точек),
-здесь перебор -- НЕПРЕРЫВНАЯ БИСЕКЦИЯ (см. `_bisect_reachable`).
+Honest parameter selection -- as in step2_crossover.py: the target tol is
+not passed to the methods directly, each method's own internal parameter
+(tol on the noisy points) is swept, the honest error is the max deviation
+of the reconstruction from the TRUE (noise-free) curve on a dense grid.
+Unlike step2 (a log grid of N_INTERNAL_GRID points), here the sweep is a
+CONTINUOUS BISECTION (see `_bisect_reachable`).
 
-Оракул (LSQ-сплайн, посаженный напрямую на истинную бесшумную кривую,
-`spline_lsq.fit_oracle`) считается ОДИН раз на пару (seed, tol) --
-не зависит от sigma/dt, в критериях K1-K3 не участвует, справочная
-таблица нижней границы представления геометрии.
+The oracle (an LSQ spline fit directly to the true noise-free curve,
+`spline_lsq.fit_oracle`) is computed ONCE per (seed, tol) pair -- doesn't
+depend on sigma/dt, doesn't participate in criteria K1-K3, a reference
+table for the lower bound on geometry representation.
 
-Размер -- единая схема для ВСЕХ методов: параметры (время в секундах,
-координаты в метрах) -> округление до см/сантисекунд -> int32 ->
-дельта-кодирование -> конкатенация потоков -> zlib.compress. `zlib` --
-единственная новая зависимость, из stdlib.
+Size -- a single scheme for ALL methods: parameters (time in seconds,
+coordinates in meters) -> rounding to cm/centiseconds -> int32 -> delta
+encoding -> stream concatenation -> zlib.compress. `zlib` is the only new
+dependency, from stdlib.
 
-Запуск:
-    venv/bin/python benchmarks/step3_decisive.py --pilot   # 3 трека, лимит 2 минуты
-    venv/bin/python benchmarks/step3_decisive.py           # полный прогон, пишет results/step3.md
+Run:
+    venv/bin/python benchmarks/step3_decisive.py --pilot   # 3 tracks, 2-minute budget
+    venv/bin/python benchmarks/step3_decisive.py           # full run, writes results/step3.md
 """
 
 from __future__ import annotations
@@ -58,37 +58,37 @@ SIGMA_LIST = [0.0, 0.1, 1.0, 5.0]
 TOL_LIST = [0.5, 2.0, 10.0]
 DT_LIST = [1.0, 5.0, 15.0]
 LENGTH_RANGE_M = (1000.0, 5000.0)
-PTS_PER_SEC = 10  # густая сетка для честной ошибки (>= 10 точек/с)
+PTS_PER_SEC = 10  # dense grid for the honest error (>= 10 points/s)
 BISECT_MAX_ITER = 30
-BYTE_SCALE = 100.0  # см (координаты) / сантисекунды (время)
+BYTE_SCALE = 100.0  # cm (coordinates) / centiseconds (time)
 
 N_TRACKS_PILOT = 3
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 OUT_MD = os.path.join(RESULTS_DIR, "step3.md")
-SECTION1_HEADER = "## 1. LSQ-сплайн истинной кривой: контракт"
-SECTION2_HEADER = "## 2. Таблицы по dt (сплайн uniform/adaptive vs DP+SED, оракул отдельно)"
+SECTION1_HEADER = "## 1. LSQ spline of the true curve: the contract"
+SECTION2_HEADER = "## 2. Tables by dt (spline uniform/adaptive vs DP+SED, oracle separate)"
 
 METHODS = ("dp_sed", "spline_uniform", "spline_adaptive")
 
-# ------------------------------------------------------- переменная скорость --
+# ------------------------------------------------------- variable speed --
 
-CRUISE_RANGE = (5.0, 20.0)  # м/с
-ACCEL_RANGE = (1.0, 2.5)  # м/с^2, разгон
-DECEL_RANGE = (1.5, 3.0)  # м/с^2, торможение
-CRUISE_DURATION_RANGE = (15.0, 90.0)  # с
-STOP_DURATION_RANGE = (2.0, 8.0)  # с
+CRUISE_RANGE = (5.0, 20.0)  # m/s
+ACCEL_RANGE = (1.0, 2.5)  # m/s^2, acceleration
+DECEL_RANGE = (1.5, 3.0)  # m/s^2, braking
+CRUISE_DURATION_RANGE = (15.0, 90.0)  # s
+STOP_DURATION_RANGE = (2.0, 8.0)  # s
 STOP_PROB = 0.4
 
 
 def _variable_speed_profile(rng: np.random.Generator, total_length_m: float):
-    """Кусочно-постоянное ускорение: разгон -> крейсерская скорость ->
-    (с вероятностью STOP_PROB) торможение до остановки -> пауза ->
-    повтор, пока не пройдена total_length_m. Возвращает (pieces,
-    duration): pieces -- список (t_start, s_start, v_start, a, dur);
-    duration подобрана так, что s(duration) == total_length_m ТОЧНО
-    (первый кусок, где кумулятивная длина достигает total_length_m,
-    обрезается по формуле кинематики, остальные отбрасываются)."""
+    """Piecewise-constant acceleration: accelerate -> cruise speed ->
+    (with probability STOP_PROB) brake to a stop -> pause -> repeat, until
+    total_length_m is covered. Returns (pieces, duration): pieces -- a
+    list of (t_start, s_start, v_start, a, dur); duration is chosen so
+    that s(duration) == total_length_m EXACTLY (the first piece where the
+    cumulative length reaches total_length_m is trimmed via the kinematic
+    formula, the rest are dropped)."""
     pieces = []
     t_cur = s_cur = v_cur = 0.0
     while s_cur < total_length_m:
@@ -155,8 +155,8 @@ def _s_of_t(pieces, t_query: np.ndarray) -> np.ndarray:
 
 
 def _geometry_for_seed(seed: int, length_range_m=LENGTH_RANGE_M):
-    """Дорожная геометрия (как step2_crossover) + профиль переменной
-    скорости -- всё из ОДНОГО geom_rng(seed), не зависит от sigma/dt."""
+    """Road geometry (as in step2_crossover) + variable-speed profile --
+    all from a SINGLE geom_rng(seed), independent of sigma/dt."""
     geom_rng = np.random.default_rng(seed)
     target_length = float(geom_rng.uniform(*length_range_m))
     segments = _random_road_segments(geom_rng, target_length)
@@ -194,20 +194,21 @@ def _dense_grid(duration: float) -> np.ndarray:
     return t_dense
 
 
-# --------------------------------------------------------------- размер --
+# --------------------------------------------------------------- size --
 
 INT32_SAFE_BOUND = 2_000_000_000.0
 
 
 def _stream_bytes(values: np.ndarray, scale: float = BYTE_SCALE) -> bytes:
-    """float64 (метры или секунды) -> округление -> int32 -> дельты.
+    """float64 (meters or seconds) -> rounding -> int32 -> deltas.
 
-    Клип перед round/astype -- изредка LSQ-фиттер на грани m_max
-    возвращает численно разъехавшийся (нефизично большой) сплайн; сам
-    кандидат всё равно отбраковывается на этапе honest-проверки (его
-    err относительно истины гигантский и никогда не <= target_tol), но
-    БЕЗ клипа np.round(huge).astype(int32) кидает RuntimeWarning
-    (переполнение) -- клип делает это тихо и детерминированно."""
+    Clipping before round/astype -- occasionally the LSQ fitter near
+    m_max returns a numerically blown-up (unphysically large) spline; the
+    candidate is rejected at the honest-check stage anyway (its err
+    against the ground truth is huge and never <= target_tol), but
+    WITHOUT the clip, np.round(huge).astype(int32) raises a
+    RuntimeWarning (overflow) -- the clip makes this silent and
+    deterministic."""
     values = np.asarray(values, dtype=float)
     if len(values) == 0:
         return b""
@@ -225,7 +226,7 @@ def compressed_size(streams: list[np.ndarray]) -> int:
     return len(zlib.compress(raw))
 
 
-# ------------------------------------------------------------ методы --
+# ------------------------------------------------------------ methods --
 
 def _build_dp_sed(track, itol: float, t_dense, true_xy_dense):
     _, idx = simplify_sed_with_indices(track, itol)
@@ -251,11 +252,11 @@ COARSE_SCAN_POINTS = 8
 
 
 def _bisect_between(build_fn, target_tol: float, lo: float, lo_result: dict, hi: float, max_iter: int = BISECT_MAX_ITER) -> dict:
-    """Уточняющая бисекция МЕЖДУ lo (проходит target_tol) и hi (не
-    проходит) на МАКСИМАЛЬНЫЙ itol (минимум байт), при котором ещё
-    err <= target_tol -- только внутри уже найденного грубым перебором
-    прохода/провала, без предположения о монотонности err(itol) за
-    пределами этой пары."""
+    """Refining bisection BETWEEN lo (passes target_tol) and hi (fails)
+    toward the LARGEST itol (fewest bytes) that still has err <=
+    target_tol -- only within the pass/fail bracket already found by the
+    coarse scan, with no assumption of monotonicity of err(itol) outside
+    that pair."""
     best = lo_result
     lo_b, hi_b = lo, hi
     for _ in range(max_iter):
@@ -271,19 +272,19 @@ def _bisect_between(build_fn, target_tol: float, lo: float, lo_result: dict, hi:
 
 
 def search_min_params(build_fn, target_tol: float) -> dict:
-    """Грубый лог-скан (COARSE_SCAN_POINTS точек, как в step2) +
-    уточняющая бисекция вокруг лучшей (минимум байт) проходящей точки.
+    """A coarse log scan (COARSE_SCAN_POINTS points, as in step2) +
+    refining bisection around the best (fewest bytes) passing point.
 
-    ВАЖНО: err(itol) для LSQ-сплайна НЕ обязательно монотонна -- слишком
-    маленький itol (много узлов, почти интерполяция по шумным и РЕДКИМ
-    (dt>=5с) точкам) может дать колебание сплайна МЕЖДУ соседними
-    отсчётами (проверено вручную: честная ошибка на густой сетке резко
-    росла при этом, хотя остаток в самих точках оставался маленьким --
-    внутренний критерий фиттера его не видит, см. коммит spline_lsq.py).
-    Поэтому реализуемость проверяется по ЛЮБОЙ точке грубого скана, а не
-    по одной самой строгой -- бисекция уточняет только ЛОКАЛЬНО, между
-    найденной лучшей проходящей точкой и её ближайшим непроходящим
-    соседом по возрастанию itol."""
+    IMPORTANT: err(itol) for the LSQ spline is NOT necessarily monotone --
+    too small an itol (many knots, near-interpolation on noisy and SPARSE
+    (dt>=5s) points) can produce a spline that oscillates BETWEEN
+    neighboring samples (checked manually: the honest error on the dense
+    grid rose sharply in that case, even though the residual at the
+    points themselves stayed small -- the fitter's internal criterion
+    doesn't see it, see the spline_lsq.py commit). So reachability is
+    checked at ANY coarse-scan point, not just the strictest one --
+    bisection only refines LOCALLY, between the best passing point found
+    and its nearest failing neighbor at a larger itol."""
     grid = target_tol * np.logspace(-2, 1, COARSE_SCAN_POINTS)
     results = [(float(g), build_fn(float(g))) for g in grid]
     passing = [(g, r) for g, r in results if r["err"] <= target_tol]
@@ -350,22 +351,22 @@ def run_grid(n_tracks, sigma_list, tol_list, dt_list, seed=SEED, verbose=True) -
                     for m in METHODS:
                         cells[(dt, sigma, tol)][m].append(res[m])
         if verbose:
-            print(f"трек seed={gseed} готов")
+            print(f"track seed={gseed} done")
     return RunResult(cells=cells, oracle=oracle)
 
 
-# --------------------------------------------------------------- отчёт --
+# --------------------------------------------------------------- report --
 
 def _summarize_method(entries: list[dict]) -> str:
     reachable = [e for e in entries if e["reachable"]]
     n_total = len(entries)
     n_reach = len(reachable)
     if n_reach == 0:
-        return "недостижимо"
+        return "unreachable"
     mean_bytes = np.mean([e["bytes"] for e in reachable])
     mean_n = np.mean([e["n"] for e in reachable])
-    suffix = "" if n_reach == n_total else f", {n_reach}/{n_total} достижимо"
-    return f"{mean_bytes:.0f}Б (n={mean_n:.1f}){suffix}"
+    suffix = "" if n_reach == n_total else f", {n_reach}/{n_total} reachable"
+    return f"{mean_bytes:.0f}B (n={mean_n:.1f}){suffix}"
 
 
 def format_section1() -> str:
@@ -373,66 +374,69 @@ def format_section1() -> str:
         [
             f"{SECTION1_HEADER}\n",
             (
-                "`src/traj/spline_lsq.py` -- LSQ-сплайн x(t)/y(t) напрямую "
-                "(`make_lsq_spline`), без привязки к ломаной (в отличие от "
-                "`spline.fit()`). Внутренние узлы -- подмножество реальных "
-                "отсчётов t (удовлетворяет условию Шёнберга-Уитни "
-                "автоматически): `uniform` -- равномерно по индексу; "
-                "`adaptive` -- двухпроходно (пробный равномерный фит -> "
-                "остатки в точках -> перераспределение узлов по кумулятивному "
-                "остатку -> повторный фит). Бисекция по числу внутренних "
-                "узлов m растит его до теоретического предела (n-k-2), но "
-                "отслеживает ЛУЧШУЮ (не последнюю) ошибку по ходу роста -- у "
-                "самой границы (почти-интерполяция шумных и/или редких точек) "
-                "изредка возникает численный разрыв ошибки на 1-2 порядка, "
-                "невидимый для остатка в ТРЕНИРОВОЧНЫХ точках (см. коммит "
-                "spline_lsq.py). Честная ошибка внутри фиттера -- ПРЯМОЙ "
-                "Евклидов остаток в самих точках (t_i, xy_i), не "
-                "point-to-segment до ломаной -- и именно поэтому НЕ видит "
-                "колебания сплайна МЕЖДУ точками (см. следующий абзац).\n"
+                "`src/traj/spline_lsq.py` -- an LSQ spline of x(t)/y(t) "
+                "directly (`make_lsq_spline`), with no tethering to the "
+                "polyline (unlike `spline.fit()`). Internal knots -- a "
+                "subset of the actual t samples (automatically satisfies "
+                "the Schoenberg-Whitney condition): `uniform` -- evenly "
+                "spaced by index; `adaptive` -- two-pass (a trial uniform "
+                "fit -> residuals at the points -> redistribute knots by "
+                "cumulative residual -> refit). Bisection over the number "
+                "of interior knots m grows it toward the theoretical limit "
+                "(n-k-2), but tracks the BEST (not the last) error along "
+                "the way -- right at that boundary (near-interpolation of "
+                "noisy and/or sparse points), the error occasionally jumps "
+                "by 1-2 orders of magnitude, invisible to the residual at "
+                "the TRAINING points (see the spline_lsq.py commit). The "
+                "honest error inside the fitter is the DIRECT Euclidean "
+                "residual at the points themselves (t_i, xy_i), not "
+                "point-to-segment to the polyline -- and that's exactly why "
+                "it does NOT see the spline oscillating BETWEEN points (see "
+                "the next paragraph).\n"
             ),
             (
-                "`fit_oracle` -- тот же фиттер, посаженный НАПРЯМУЮ на "
-                "плотную истинную (бесшумную) кривую; не знает о шуме или "
-                "разрежённости наблюдений -- справочная нижняя граница "
-                "представления геометрии сплайном при заданном tol, "
-                "считается один раз на (seed, tol), в критериях K1-K3 не "
-                "участвует.\n"
+                "`fit_oracle` -- the same fitter, fit DIRECTLY to the dense "
+                "true (noise-free) curve; knows nothing about noise or "
+                "observation sparsity -- a reference lower bound on the "
+                "spline's geometry representation at a given tol, computed "
+                "once per (seed, tol), doesn't participate in criteria K1-K3.\n"
             ),
             (
-                "Подбор внутреннего параметра метода (tol на зашумлённых "
-                "точках) -- грубый лог-скан (8 точек, как в step2) + "
-                "уточняющая бисекция вокруг лучшей проходящей точки "
-                "(`search_min_params`/`_bisect_between` в step3_decisive.py), "
-                "а НЕ чистая бисекция от самого строгого internal_tol: err(itol) "
-                "для LSQ-сплайна не монотонна -- слишком маленький itol на "
-                "редких (dt>=5с) точках может дать сплайн, который проходит "
-                "близко к отсчётам, но дико колеблется МЕЖДУ ними (честная "
-                "ошибка на густой сетке при этом на порядки хуже, хотя остаток "
-                "в самих точках маленький -- внутренний критерий фиттера этого "
-                "не видит; обнаружено эмпирически при отладке). Грубый скан "
-                "устойчив к этой немонотонности, чистая бисекция от самого "
-                "строгого конца иногда ошибочно помечала клетку недостижимой. "
-                "Размер -- единая схема для всех методов: время/координаты -> "
-                "округление до см/сантисекунд -> int32 (с клипом от переполнения) "
-                "-> дельты -> zlib.compress.\n"
+                "Selecting the method's internal parameter (tol on the "
+                "noisy points) -- a coarse log scan (8 points, as in step2) "
+                "+ refining bisection around the best passing point "
+                "(`search_min_params`/`_bisect_between` in "
+                "step3_decisive.py), rather than pure bisection from the "
+                "strictest internal_tol: err(itol) for the LSQ spline isn't "
+                "monotone -- too small an itol on sparse (dt>=5s) points "
+                "can produce a spline that passes close to the samples but "
+                "wildly oscillates BETWEEN them (the honest error on the "
+                "dense grid is then orders of magnitude worse, even though "
+                "the residual at the points themselves is small -- the "
+                "fitter's internal criterion doesn't see this; found "
+                "empirically while debugging). The coarse scan is robust to "
+                "this non-monotonicity; pure bisection from the strictest "
+                "end sometimes incorrectly flagged a cell unreachable. "
+                "Size -- a single scheme for all methods: time/coordinates "
+                "-> rounding to cm/centiseconds -> int32 (with overflow "
+                "clipping) -> deltas -> zlib.compress.\n"
             ),
         ]
     ) + "\n"
 
 
 def format_section2(result: RunResult, sigma_list, tol_list, dt_list, n_tracks) -> str:
-    lines = [f"{SECTION2_HEADER}\n", f"{n_tracks} треков, seed={SEED}.\n"]
+    lines = [f"{SECTION2_HEADER}\n", f"{n_tracks} tracks, seed={SEED}.\n"]
     header = "| sigma \\ tol | " + " | ".join(f"{t:g}" for t in tol_list) + " |"
 
     for dt in dt_list:
-        lines.append(f"### dt = {dt:g} с\n")
+        lines.append(f"### dt = {dt:g} s\n")
         for method_key, title in (
             ("dp_sed", "DP+SED"),
-            ("spline_uniform", "LSQ-сплайн (uniform)"),
-            ("spline_adaptive", "LSQ-сплайн (adaptive)"),
+            ("spline_uniform", "LSQ spline (uniform)"),
+            ("spline_adaptive", "LSQ spline (adaptive)"),
         ):
-            lines.append(f"#### {title}: байты (n параметров), доля достижимых треков")
+            lines.append(f"#### {title}: bytes (n parameters), fraction of reachable tracks")
             lines.append(header)
             lines.append("|" + "---|" * (len(tol_list) + 1))
             for sigma in sigma_list:
@@ -442,8 +446,8 @@ def format_section2(result: RunResult, sigma_list, tol_list, dt_list, n_tracks) 
                 lines.append("| " + " | ".join(row) + " |")
             lines.append("")
 
-    lines.append("### Оракул (LSQ-сплайн по истинной кривой, справочно -- один раз на (seed, tol), не зависит от sigma/dt)\n")
-    lines.append("| tol | среднее n | средние байты | доля достижимых (сходимость бисекции) |")
+    lines.append("### Oracle (LSQ spline on the true curve, for reference -- once per (seed, tol), independent of sigma/dt)\n")
+    lines.append("| tol | mean n | mean bytes | fraction reachable (bisection converged) |")
     lines.append("|---|---|---|---|")
     geom_seeds = sorted({s for (s, _tol) in result.oracle})
     for tol in tol_list:
@@ -461,37 +465,37 @@ def format_section2(result: RunResult, sigma_list, tol_list, dt_list, n_tracks) 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pilot", action="store_true", help="бюджетный прогон (3 трека), без записи в .md")
-    parser.add_argument("--n-tracks", type=int, default=None, help="переопределить N_TRACKS полного прогона")
+    parser.add_argument("--pilot", action="store_true", help="budget run (3 tracks), doesn't write to .md")
+    parser.add_argument("--n-tracks", type=int, default=None, help="override N_TRACKS for the full run")
     args = parser.parse_args()
 
     if args.pilot:
-        print(f"ПИЛОТ: {N_TRACKS_PILOT} треков, sigma={SIGMA_LIST}, tol={TOL_LIST}, dt={DT_LIST}")
+        print(f"PILOT: {N_TRACKS_PILOT} tracks, sigma={SIGMA_LIST}, tol={TOL_LIST}, dt={DT_LIST}")
         t0 = time.time()
         result = run_grid(N_TRACKS_PILOT, SIGMA_LIST, TOL_LIST, DT_LIST)
         elapsed = time.time() - t0
         n_cells_pilot = N_TRACKS_PILOT * len(SIGMA_LIST) * len(TOL_LIST) * len(DT_LIST)
         n_cells_full = N_TRACKS * len(SIGMA_LIST) * len(TOL_LIST) * len(DT_LIST)
         extrapolated = elapsed * (n_cells_full / n_cells_pilot)
-        print(f"\nпилот занял {elapsed:.1f}с ({n_cells_pilot} (трек x sigma x tol x dt) комбинаций)")
-        print(f"экстраполяция на полную сетку ({n_cells_full} комбинаций): ~{extrapolated:.0f}с (~{extrapolated / 60:.1f} мин)")
+        print(f"\npilot took {elapsed:.1f}s ({n_cells_pilot} (track x sigma x tol x dt) combinations)")
+        print(f"extrapolated to the full grid ({n_cells_full} combinations): ~{extrapolated:.0f}s (~{extrapolated / 60:.1f} min)")
         print(format_section2(result, SIGMA_LIST, TOL_LIST, DT_LIST, N_TRACKS_PILOT))
         return
 
     n_tracks = args.n_tracks if args.n_tracks is not None else N_TRACKS
-    print(f"ПОЛНЫЙ ПРОГОН: {n_tracks} треков, sigma={SIGMA_LIST}, tol={TOL_LIST}, dt={DT_LIST}")
+    print(f"FULL RUN: {n_tracks} tracks, sigma={SIGMA_LIST}, tol={TOL_LIST}, dt={DT_LIST}")
     t0 = time.time()
     result = run_grid(n_tracks, SIGMA_LIST, TOL_LIST, DT_LIST)
     elapsed = time.time() - t0
-    print(f"\nполный прогон занял {elapsed:.1f}с ({elapsed / 60:.1f} мин)")
+    print(f"\nfull run took {elapsed:.1f}s ({elapsed / 60:.1f} min)")
 
     body1 = format_section1()
     body2 = format_section2(result, SIGMA_LIST, TOL_LIST, DT_LIST, n_tracks)
     if n_tracks != N_TRACKS:
         body2 += (
-            f"\n**Ограничение бюджета времени:** N_TRACKS уменьшен с {N_TRACKS} до "
-            f"{n_tracks} по результатам пилота/полного прогона. Полный прогон занял "
-            f"{elapsed:.1f}с ({elapsed / 60:.1f} мин) на {n_tracks} треках.\n"
+            f"\n**Time budget constraint:** N_TRACKS was reduced from {N_TRACKS} to "
+            f"{n_tracks} based on the pilot/full-run results. The full run took "
+            f"{elapsed:.1f}s ({elapsed / 60:.1f} min) on {n_tracks} tracks.\n"
         )
     upsert_section(OUT_MD, SECTION1_HEADER, body1)
     upsert_section(OUT_MD, SECTION2_HEADER, body2)

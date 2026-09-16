@@ -1,15 +1,15 @@
-"""Step 1, п.4: кинематика (гипотеза B) — где исправленный сплайн может
-выигрывать у DP по восстановлению скорости/ускорения; Калман (CA + RTS)
-как третий ориентир.
+"""Step 1, item 4: kinematics (hypothesis B) -- where the fixed spline can
+beat DP at recovering velocity/acceleration; Kalman (CA + RTS) as a third
+reference point.
 
-Синтетические траектории с известной (аналитической, замкнутая форма) v
-и a: разгон/торможение (постоянное тангенциальное ускорение), поворот
-(постоянная скорость по дуге окружности — центростремительное ускорение),
-стоянка. Раскладка сегментов случайна на seed; скорость непрерывна на
-стыках сегментов (ускорение может скачком меняться — реалистично).
-Наблюдения: позиция + гауссов шум 5м, шаг времени неравномерный 1..5с.
+Synthetic trajectories with known (analytical, closed-form) v and a:
+acceleration/braking (constant tangential acceleration), turning
+(constant speed along a circular arc -- centripetal acceleration),
+stopping. Segment layout is random per seed; velocity is continuous
+across segment boundaries (acceleration can jump -- realistic).
+Observations: position + Gaussian noise 5m, uneven time step 1..5s.
 
-Запуск: venv/bin/python benchmarks/step1_kinematics.py
+Run: venv/bin/python benchmarks/step1_kinematics.py
 """
 
 from __future__ import annotations
@@ -33,13 +33,13 @@ from _report_utils import upsert_section  # noqa: E402
 TOL = 10.0
 NOISE_STD = 5.0
 DT_RANGE = (1.0, 5.0)
-ACCEL_THRESHOLD = 3.0  # м/с^2
+ACCEL_THRESHOLD = 3.0  # m/s^2
 SEED = 42
 N_TRACKS = 30
 KALMAN_Q_CANDIDATES = [0.01, 0.1, 1.0, 10.0, 100.0]
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 OUT_MD = os.path.join(RESULTS_DIR, "step1.md")
-SECTION_HEADER = "## 4. Кинематика (гипотеза B): где сплайн выигрывает у DP"
+SECTION_HEADER = "## 4. Kinematics (hypothesis B): where the spline beats DP"
 
 
 # ---------------------------------------------------------------- motion --
@@ -50,11 +50,11 @@ class Segment:
     duration: float
     accel: float = 0.0
     speed: float = 0.0
-    radius: float = 0.0  # signed: + лево (CCW), - право (CW)
+    radius: float = 0.0  # signed: + left (CCW), - right (CW)
 
 
 def _segment_state(seg: Segment, s: float, x0: float, y0: float, heading0: float, v0: float):
-    """Состояние (x,y,vx,vy,ax,ay,heading,v) в локальном времени s внутри сегмента."""
+    """State (x,y,vx,vy,ax,ay,heading,v) at local time s within the segment."""
     if seg.kind == "stop":
         return x0, y0, 0.0, 0.0, 0.0, 0.0, heading0, 0.0
     if seg.kind in ("accel", "cruise"):
@@ -79,8 +79,8 @@ def _segment_state(seg: Segment, s: float, x0: float, y0: float, heading0: float
 
 
 def _random_segments(rng: np.random.Generator) -> list[Segment]:
-    """Случайная раскладка разгон/торможение/поворот/стоянка с непрерывной
-    по стыкам скоростью (ускорение может скачком меняться)."""
+    """Random layout of accel/brake/turn/stop with velocity continuous
+    across boundaries (acceleration can jump)."""
     segs: list[Segment] = []
     v_cur = 0.0
     n_blocks = int(rng.integers(4, 7))
@@ -159,7 +159,7 @@ def _sample_times(total_duration: float, rng: np.random.Generator) -> np.ndarray
 
 
 def make_synthetic_track(seed: int) -> tuple[Track, np.ndarray, np.ndarray]:
-    """Возвращает (трек с шумными наблюдениями, v_true, a_true) в точках track.t."""
+    """Returns (track with noisy observations, v_true, a_true) at points track.t."""
     rng = np.random.default_rng(seed)
     segments = _random_segments(rng)
     total_duration, f = _ground_truth_fn(segments)
@@ -178,8 +178,8 @@ def make_synthetic_track(seed: int) -> tuple[Track, np.ndarray, np.ndarray]:
 # --------------------------------------------------------------- Kalman ---
 
 def _kalman_ca_rts_1d(t: np.ndarray, z: np.ndarray, meas_std: float, q: float) -> np.ndarray:
-    """Constant-acceleration Kalman + RTS smoother по одной оси.
-    Возвращает массив (n, 3): [pos, vel, acc]."""
+    """Constant-acceleration Kalman + RTS smoother along one axis.
+    Returns an (n, 3) array: [pos, vel, acc]."""
     n = len(t)
     R = meas_std ** 2
     H = np.array([1.0, 0.0, 0.0])
@@ -273,7 +273,7 @@ def main() -> None:
 
     tune_subset = tracks_and_gt[:8]
     q = _pick_kalman_q(tune_subset)
-    print(f"выбран Kalman q={q} (по RMSE ускорения на {len(tune_subset)} треках)")
+    print(f"chosen Kalman q={q} (by acceleration RMSE on {len(tune_subset)} tracks)")
 
     v_err = {"spline": [], "dp_pchip": [], "kalman": []}
     a_err = {"spline": [], "dp_pchip": [], "kalman": []}
@@ -286,7 +286,7 @@ def main() -> None:
         v_dp, a_dp = _dp_pchip_derivatives(track, TOL, t_eval)
         _pos_kf, v_kf, a_kf = kalman_ca_rts_2d(track.t, track.xy, NOISE_STD, q)
 
-        # исключаем первую/последнюю точку -- краевой эффект у всех трёх методов
+        # exclude the first/last point -- an edge effect for all three methods
         sl = slice(1, -1)
         v_err["spline"].append(np.linalg.norm(v_sp[sl] - v_true[sl], axis=1))
         v_err["dp_pchip"].append(np.linalg.norm(v_dp[sl] - v_true[sl], axis=1))
@@ -337,22 +337,22 @@ def main() -> None:
     lines = [
         f"{SECTION_HEADER}\n",
         (
-            f"{N_TRACKS} синтетических траекторий (разгон/торможение/поворот/"
-            f"стоянка, скорость непрерывна на стыках, seed={SEED}), гауссов шум "
-            f"{NOISE_STD:.0f}м на позицию, шаг {DT_RANGE[0]:.0f}..{DT_RANGE[1]:.0f}с. "
-            f"Оценка в {n_points} точках (без первой/последней точки трека — "
-            f"краевой эффект у всех методов), из них |a_true| > {ACCEL_THRESHOLD:.0f} "
-            f"м/с² в {n_positive} ({100 * n_positive / n_points:.1f}%). "
-            f"Калман: constant-acceleration + RTS, q={q:g} (подобран по RMSE "
-            f"ускорения на подвыборке из {len(tune_subset)} треков).\n"
+            f"{N_TRACKS} synthetic trajectories (accel/brake/turn/stop, "
+            f"velocity continuous across boundaries, seed={SEED}), Gaussian "
+            f"noise {NOISE_STD:.0f}m on position, step {DT_RANGE[0]:.0f}..{DT_RANGE[1]:.0f}s. "
+            f"Evaluated at {n_points} points (excluding the track's first/last "
+            f"point -- an edge effect for all methods), of which |a_true| > "
+            f"{ACCEL_THRESHOLD:.0f} m/s² for {n_positive} ({100 * n_positive / n_points:.1f}%). "
+            f"Kalman: constant-acceleration + RTS, q={q:g} (chosen by "
+            f"acceleration RMSE on a subsample of {len(tune_subset)} tracks).\n"
         ),
         (
-            "| Метод | Ошибка v, м/с (median/RMSE) | Ошибка a, м/с² (median/RMSE) | "
+            "| Method | Velocity error, m/s (median/RMSE) | Acceleration error, m/s² (median/RMSE) | "
             f"Precision \\|a\\|>{ACCEL_THRESHOLD:.0f} | Recall |"
         ),
         "|---|---|---|---|---|",
     ]
-    names = {"spline": "исправленный сплайн", "dp_pchip": "DP + PCHIP по вершинам", "kalman": "Калман (CA+RTS)"}
+    names = {"spline": "fixed spline", "dp_pchip": "DP + PCHIP over vertices", "kalman": "Kalman (CA+RTS)"}
     for kind in ("spline", "dp_pchip", "kalman"):
         s = stats[kind]
         lines.append(
@@ -365,21 +365,21 @@ def main() -> None:
     best_v = min(stats, key=lambda k: stats[k]["v_err_median"])
     best_a = min(stats, key=lambda k: stats[k]["a_err_median"])
     lines.append(
-        f"Лучшая медианная ошибка скорости: {names[best_v]}. Лучшая медианная "
-        f"ошибка ускорения: {names[best_a]}.\n"
+        f"Best median velocity error: {names[best_v]}. Best median "
+        f"acceleration error: {names[best_a]}.\n"
     )
     lines.append(
-        "Примечание: RMSE ускорения у DP + PCHIP заметно выше медианы "
-        f"(max ошибка {stats['dp_pchip']['a_err_max']:.0f} м/с² против "
-        f"{stats['spline']['a_err_max']:.1f} у сплайна и "
-        f"{stats['kalman']['a_err_max']:.1f} у Калмана) — численная "
-        "хрупкость: если соседние вершины DP оказываются близко по "
-        "времени (короткий отрезок между двумя точками разрыва DP), "
-        "вторая производная PCHIP на этом отрезке может уходить в тысячи "
-        "м/с². У Калмана обратная картина: лучшая ошибка (RMSE и медиана), "
-        "но заметно ниже recall детекции |a| > "
-        f"{ACCEL_THRESHOLD:.0f} — сглаживание CA-модели подавляет резкие "
-        "изменения ускорения (повороты), а не только шум.\n"
+        "Note: DP + PCHIP's acceleration RMSE is noticeably above its median "
+        f"(max error {stats['dp_pchip']['a_err_max']:.0f} m/s² vs "
+        f"{stats['spline']['a_err_max']:.1f} for the spline and "
+        f"{stats['kalman']['a_err_max']:.1f} for Kalman) -- numerical "
+        "fragility: when neighboring DP vertices end up close in time "
+        "(a short segment between two DP break points), PCHIP's second "
+        "derivative on that segment can blow up to thousands of m/s². "
+        "Kalman shows the opposite picture: best error (RMSE and median), "
+        "but noticeably lower recall for detecting |a| > "
+        f"{ACCEL_THRESHOLD:.0f} -- the CA model's smoothing suppresses sharp "
+        "acceleration changes (turns), not just noise.\n"
     )
 
     body = "\n".join(lines) + "\n"

@@ -5,7 +5,7 @@ import tempfile
 import shutil
 import os
 
-pytest.importorskip("lmdb", reason="legacy level1 dep не установлен в venv")
+pytest.importorskip("lmdb", reason="legacy level1 dep not installed in venv")
 
 from level1.storage import LMDBStorage
 

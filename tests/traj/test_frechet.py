@@ -1,4 +1,4 @@
-"""Тесты дискретной метрики Фреше."""
+"""Tests for the discrete Frechet distance."""
 
 import numpy as np
 
@@ -46,7 +46,7 @@ def test_distance_within_matches_full_when_threshold_generous():
 def test_distance_within_flags_inexact_below_threshold():
     rng = np.random.default_rng(5)
     P = rng.random((15, 2)) * 1000
-    Q = rng.random((15, 2)) * 1000 + 5000.0  # заведомо далеко
+    Q = rng.random((15, 2)) * 1000 + 5000.0  # deliberately far away
     val, exact = distance_within(P, Q, threshold=1.0)
     assert not exact
     assert val > 1.0

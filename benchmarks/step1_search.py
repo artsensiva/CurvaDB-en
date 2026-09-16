@@ -1,8 +1,8 @@
-"""Step 1, п.6: поиск (гипотеза A) — recall@10 (raw/DP/исправленный
-сплайн) на ОЧИЩЕННЫХ треках, бутстрап-интервал, 3 seed для выбора
-запросов (повтор методологии step0.py, но на честных данных/фиттинге).
+"""Step 1, item 6: search (hypothesis A) -- recall@10 (raw/DP/fixed
+spline) on CLEANED tracks, bootstrap interval, 3 seeds for query
+selection (repeats step0.py's methodology, but on honest data/fitting).
 
-Запуск: venv/bin/python benchmarks/step1_search.py
+Run: venv/bin/python benchmarks/step1_search.py
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ N_BOOTSTRAP = 2000
 CI = 0.95
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 OUT_MD = os.path.join(RESULTS_DIR, "step1.md")
-SECTION_HEADER = "## 6. Поиск (гипотеза A): recall@10 на очищенных треках"
+SECTION_HEADER = "## 6. Search (hypothesis A): recall@10 on cleaned tracks"
 
 
 def _bootstrap_ci(values: np.ndarray, n_boot: int, ci: float, seed: int) -> tuple[float, float]:
@@ -45,7 +45,7 @@ def main() -> None:
     t0 = time.time()
     tracks, _clean_stats = load_clean_tracks(n=N_TRACKS, seed=CLEAN_SEED)
     reprs = [build_representation(tr, TOL) for tr in tracks]
-    print(f"построено {len(reprs)} представлений за {time.time() - t0:.1f}s")
+    print(f"built {len(reprs)} representations in {time.time() - t0:.1f}s")
 
     reprs_by_kind = {
         "raw": [(i, r.raw) for i, r in enumerate(reprs)],
@@ -89,28 +89,28 @@ def main() -> None:
     lines = [
         f"{SECTION_HEADER}\n",
         (
-            f"{len(tracks)} очищенных треков (seed={CLEAN_SEED}), tol={TOL:.0f}м, "
-            f"{N_QUERIES} запросов × {len(QUERY_SEEDS)} seed выбора запросов "
+            f"{len(tracks)} cleaned tracks (seed={CLEAN_SEED}), tol={TOL:.0f}m, "
+            f"{N_QUERIES} queries x {len(QUERY_SEEDS)} query-selection seeds "
             f"({', '.join(str(s) for s in QUERY_SEEDS)}) = {len(all_recalls['dp'])} "
-            f"измерений на представление; recall@10 относительно точного Фреше "
-            f"на сырых (очищенных) треках; {CI:.0%} доверительный интервал — "
-            f"бутстрап, {N_BOOTSTRAP} ресэмплов.\n"
+            f"measurements per representation; recall@10 against the exact "
+            f"Frechet distance on raw (cleaned) tracks; {CI:.0%} confidence "
+            f"interval -- bootstrap, {N_BOOTSTRAP} resamples.\n"
         ),
-        "| Представление | Recall@10 (mean) | " + f"{CI:.0%} CI" + " |",
+        "| Representation | Recall@10 (mean) | " + f"{CI:.0%} CI" + " |",
         "|---|---|---|",
-        f"| DP-ломаная | {stats['dp']['mean']:.3f} | ({stats['dp']['ci_lo']:.3f}, {stats['dp']['ci_hi']:.3f}) |",
+        f"| DP polyline | {stats['dp']['mean']:.3f} | ({stats['dp']['ci_lo']:.3f}, {stats['dp']['ci_hi']:.3f}) |",
         (
-            f"| исправленный сплайн | {stats['spline_same']['mean']:.3f} | "
+            f"| fixed spline | {stats['spline_same']['mean']:.3f} | "
             f"({stats['spline_same']['ci_lo']:.3f}, {stats['spline_same']['ci_hi']:.3f}) |"
         ),
         "",
         (
-            f"Для сравнения step0.md (сломанный фиттинг, без чистки, 1 seed "
-            "запросов): DP = 0.997, сплайн = 0.707. После чистки (п.1) и "
-            "честного фиттинга (п.2) разрыв между DP и сплайном по recall@10 "
-            "почти полностью закрылся"
+            f"For comparison, step0.md (broken fitting, no cleaning, 1 query "
+            "seed): DP = 0.997, spline = 0.707. After cleaning (item 1) and "
+            "honest fitting (item 2), the recall@10 gap between DP and the "
+            "spline has almost entirely closed"
             + (
-                ", но DP всё ещё немного впереди"
+                ", but DP is still slightly ahead"
                 if stats["dp"]["mean"] > stats["spline_same"]["mean"]
                 else ""
             )

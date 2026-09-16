@@ -1,7 +1,7 @@
-"""Step 1, п.2: честный фиттинг сплайна — проверка на густой сетке,
-сравнение параметризации временем и длиной хорды.
+"""Step 1, item 2: honest spline fitting -- dense-grid check, comparing
+time and chord-length parametrization.
 
-Запуск: venv/bin/python benchmarks/step1_spline_fit.py
+Run: venv/bin/python benchmarks/step1_spline_fit.py
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ TOL = 10.0
 PASS_THRESHOLD = 0.99
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 OUT_MD = os.path.join(RESULTS_DIR, "step1.md")
-SECTION_HEADER = "## 2. Честный фиттинг сплайна"
+SECTION_HEADER = "## 2. Honest spline fitting"
 
 
 def _run(tracks, parametrization: str) -> dict:
@@ -61,24 +61,24 @@ def _run(tracks, parametrization: str) -> dict:
 def _section_md(res_time: dict, res_chord: dict, mean_raw_n: float) -> str:
     passed = res_time["pass_rate"] >= PASS_THRESHOLD
     verdict = (
-        f"ПОРОГ ПРИЁМКИ (>= {PASS_THRESHOLD:.0%} треков с густой ошибкой <= tol) "
-        f"{'ДОСТИГНУТ' if passed else 'НЕ ДОСТИГНУТ'}: "
+        f"ACCEPTANCE THRESHOLD (>= {PASS_THRESHOLD:.0%} of tracks with dense error <= tol) "
+        f"{'REACHED' if passed else 'NOT REACHED'}: "
         f"{res_time['n_pass']}/{res_time['n_tracks']} = {res_time['pass_rate']:.2%} "
-        "(параметризация временем)."
+        "(time parametrization)."
     )
     lines = [
         f"{SECTION_HEADER}\n",
         (
-            f"Проверка: >= 10 точек густой сетки на каждый интервал между "
-            f"соседними точками ОЧИЩЕННОГО трека (после п.1), ошибка = "
-            f"point-to-segment расстояние до прямого сегмента между ними. "
-            f"Если s=0 (интерполяция) нарушает tol между какой-то парой точек — "
-            f"адаптивно добавляется synthetic-узел в месте максимального "
-            f"отклонения (до 8 раундов); затем растим `s` для компактности, "
-            f"сохраняя густую ошибку <= tol.\n"
+            f"Check: >= 10 dense-grid points per interval between "
+            f"neighboring points of the CLEANED track (after item 1), error = "
+            f"point-to-segment distance to the straight segment between them. "
+            f"If s=0 (interpolation) violates tol between some pair of points, "
+            f"a synthetic knot is adaptively added at the location of maximum "
+            f"deviation (up to 8 rounds); then `s` is grown for compactness, "
+            f"keeping the dense error <= tol.\n"
         ),
         f"**{verdict}**\n",
-        "| Параметризация | Pass rate | Median err, м | p99 err, м | Max err, м | mean control points | треков с synthetic-узлами | bisect converged | время, с |",
+        "| Parametrization | Pass rate | Median err, m | p99 err, m | Max err, m | mean control points | tracks with synthetic knots | bisect converged | time, s |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
     for res in (res_time, res_chord):
@@ -91,16 +91,16 @@ def _section_md(res_time: dict, res_chord: dict, mean_raw_n: float) -> str:
     lines += [
         "",
         (
-            f"Среднее число точек в очищенном треке: {mean_raw_n:.1f}. Обе "
-            "параметризации достигают одинакового pass rate; параметризация "
-            "длиной хорды даёт заметно компактнее представление "
+            f"Mean number of points in a cleaned track: {mean_raw_n:.1f}. Both "
+            "parametrizations reach the same pass rate; chord-length "
+            "parametrization gives a noticeably more compact representation "
             f"({res_chord['mean_ncp']:.1f} vs {res_time['mean_ncp']:.1f} "
-            "контрольных точек в среднем), но `derivatives()` (скорость/"
-            "ускорение) реализована только для параметризации временем — "
-            "нелинейная связь u<->t для хорды потребовала бы отдельной "
-            "инверсии t(u), не нужной за пределами этого сравнения. Для "
-            "кинематики (п.4) и остальных бенчмарков step1 используется "
-            "параметризация временем (по умолчанию в fit()).\n"
+            "control points on average), but `derivatives()` (velocity/"
+            "acceleration) is only implemented for time parametrization -- "
+            "the nonlinear u<->t relationship for chord would require a "
+            "separate inversion t(u), not needed beyond this comparison. For "
+            "kinematics (item 4) and the rest of the step1 benchmarks, time "
+            "parametrization is used (the default in fit()).\n"
         ),
         "",
     ]
@@ -110,7 +110,7 @@ def _section_md(res_time: dict, res_chord: dict, mean_raw_n: float) -> str:
 def main() -> None:
     tracks, _clean_stats = load_clean_tracks(n=N_TRACKS, seed=SEED)
     mean_raw_n = float(np.mean([len(tr.t) for tr in tracks]))
-    print(f"очищенных треков: {len(tracks)}, среднее число точек: {mean_raw_n:.1f}")
+    print(f"cleaned tracks: {len(tracks)}, mean number of points: {mean_raw_n:.1f}")
 
     res_time = _run(tracks, "time")
     print(
@@ -131,7 +131,7 @@ def main() -> None:
 
     if res_time["pass_rate"] < PASS_THRESHOLD:
         print(
-            "\nПОРОГ НЕ ДОСТИГНУТ — см. TODO.md перед тем, как переходить к п.4."
+            "\nTHRESHOLD NOT REACHED -- see TODO.md before moving on to item 4."
         )
 
 

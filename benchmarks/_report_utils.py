@@ -1,6 +1,6 @@
-"""Общая утилита для инкрементального обновления benchmarks/results/step1.md:
-несколько скриптов (step1_clean.py, step1_spline_fit.py, ...) пишут каждый
-свою секцию, не затирая остальные."""
+"""Shared utility for incrementally updating benchmarks/results/step1.md:
+several scripts (step1_clean.py, step1_spline_fit.py, ...) each write their
+own section, without clobbering the others."""
 
 from __future__ import annotations
 
@@ -8,9 +8,10 @@ import os
 
 
 def upsert_section(path: str, header: str, body: str) -> None:
-    """Заменяет секцию, начинающуюся со строки `header` (ровно `## ...`) и
-    заканчивающуюся перед следующим `## ` или концом файла, на `body`.
-    Если такой секции нет — добавляет `body` в конец файла."""
+    """Replaces the section starting at the line `header` (exactly
+    `## ...`) and ending before the next `## ` or end of file, with
+    `body`. If no such section exists, appends `body` to the end of the
+    file."""
     content = ""
     if os.path.exists(path):
         with open(path) as f:

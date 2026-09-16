@@ -1,14 +1,14 @@
-"""Step 2, п.3: неоптимальность FITPACK -- сколько контрольных точек даёт
-`splprep` (через `traj.spline.fit`) против минимального числа РАВНОМЕРНЫХ
-узлов, при котором `make_lsq_spline` всё ещё держит tol (честная густая
-ошибка, `traj.spline.dense_max_error`).
+"""Step 2, item 3: FITPACK suboptimality -- how many control points
+`splprep` (via `traj.spline.fit`) uses compared to the minimal number of
+UNIFORM knots at which `make_lsq_spline` still holds tol (honest dense
+error, `traj.spline.dense_max_error`).
 
-5 треков из той же синтетики, что и step2_crossover.py (общий генератор
-`make_synthetic_track`, те же первые 5 seed из мастер-seed=42),
-sigma=0.1, tol=1.0 -- типичная средняя клетка сетки step2 (не самая
-простая и не самая жёсткая).
+5 tracks from the same synthetic data as step2_crossover.py (shared
+generator `make_synthetic_track`, the same first 5 seeds from
+master-seed=42), sigma=0.1, tol=1.0 -- a typical mid-range cell of the
+step2 grid (neither the easiest nor the hardest).
 
-Запуск: venv/bin/python benchmarks/step2_fitpack.py
+Run: venv/bin/python benchmarks/step2_fitpack.py
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ TOL = 1.0
 MAX_N_INTERIOR = 300
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 OUT_MD = os.path.join(RESULTS_DIR, "step2.md")
-SECTION_HEADER = "## 3. Неоптимальность FITPACK: splprep vs минимальные равномерные узлы"
+SECTION_HEADER = "## 3. FITPACK suboptimality: splprep vs minimal uniform knots"
 
 
 def _uniform_clamped_knots(u_min: float, u_max: float, n_interior: int, k: int) -> np.ndarray:
@@ -43,16 +43,16 @@ def _uniform_clamped_knots(u_min: float, u_max: float, n_interior: int, k: int) 
 
 
 def min_uniform_knots(t: np.ndarray, xy: np.ndarray, tol: float, mode: str = "time", k: int = DEGREE):
-    """Растим число внутренних равномерных узлов n_int = 0, 1, 2, ...
-    пока честная густая ошибка (dense_max_error) не станет <= tol.
-    Возвращает (n_control_points, n_interior, dense_error) или
-    (None, None, None), если не уложились за MAX_N_INTERIOR."""
+    """Grows the number of interior uniform knots n_int = 0, 1, 2, ...
+    until the honest dense error (dense_max_error) becomes <= tol.
+    Returns (n_control_points, n_interior, dense_error) or
+    (None, None, None) if it didn't fit within MAX_N_INTERIOR."""
     u = _param_u(t, xy, mode)
     u_min, u_max = float(u.min()), float(u.max())
     for n_int in range(0, MAX_N_INTERIOR + 1):
         knots = _uniform_clamped_knots(u_min, u_max, n_int, k)
         if len(knots) - k - 1 > len(u):
-            break  # больше параметров, чем точек -- дальше только хуже обусловлено
+            break  # more parameters than points -- only gets worse-conditioned from here
         try:
             bx = make_lsq_spline(u, xy[:, 0], knots, k=k)
             by = make_lsq_spline(u, xy[:, 1], knots, k=k)
@@ -93,24 +93,24 @@ def main() -> None:
     lines = [
         f"{SECTION_HEADER}\n",
         (
-            f"{N_FITPACK_TRACKS} треков из синтетики step2_crossover.py (те же "
-            f"первые {N_FITPACK_TRACKS} seed из мастер-seed={SEED}), sigma={SIGMA:g}м, "
-            f"tol={TOL:g}м, параметризация временем. `splprep` -- через "
-            "`traj.spline.fit` (честный густой контроль, адаптивная densify + "
-            "рост `s`). `make_lsq_spline` -- РАВНОМЕРНЫЕ узлы, число внутренних "
-            "узлов растится с 0 до первого прохождения той же честной густой "
-            "проверки (`traj.spline.dense_max_error`).\n"
+            f"{N_FITPACK_TRACKS} tracks from step2_crossover.py's synthetic data "
+            f"(the same first {N_FITPACK_TRACKS} seeds from master-seed={SEED}), sigma={SIGMA:g}m, "
+            f"tol={TOL:g}m, time parametrization. `splprep` -- via "
+            "`traj.spline.fit` (honest dense control, adaptive densify + "
+            "growing `s`). `make_lsq_spline` -- UNIFORM knots, the number of "
+            "interior knots grown from 0 until it first passes the same "
+            "honest dense check (`traj.spline.dense_max_error`).\n"
         ),
-        "| seed | n точек | n control points (splprep) | n control points (lsq, равномерные) | отношение |",
+        "| seed | n points | n control points (splprep) | n control points (lsq, uniform) | ratio |",
         "|---|---|---|---|---|",
     ]
     for r in rows:
         ratio = (
-            f"{r['n_cp_splprep'] / r['n_cp_lsq']:.2f}x" if r["n_cp_lsq"] else "н/д (не уложились)"
+            f"{r['n_cp_splprep'] / r['n_cp_lsq']:.2f}x" if r["n_cp_lsq"] else "n/a (didn't fit)"
         )
         lines.append(
             f"| {r['seed']} | {r['n_points']} | {r['n_cp_splprep']} | "
-            f"{r['n_cp_lsq'] if r['n_cp_lsq'] else 'н/д'} | {ratio} |"
+            f"{r['n_cp_lsq'] if r['n_cp_lsq'] else 'n/a'} | {ratio} |"
         )
     lines.append("")
 
@@ -119,17 +119,17 @@ def main() -> None:
         mean_splprep = np.mean([r["n_cp_splprep"] for r in valid])
         mean_lsq = np.mean([r["n_cp_lsq"] for r in valid])
         lines.append(
-            f"В среднем по {len(valid)}/{N_FITPACK_TRACKS} трекам: splprep "
-            f"{mean_splprep:.1f} контрольных точек, минимальные равномерные "
-            f"узлы -- {mean_lsq:.1f} ({mean_splprep / mean_lsq:.2f}x). "
+            f"On average across {len(valid)}/{N_FITPACK_TRACKS} tracks: splprep "
+            f"uses {mean_splprep:.1f} control points, minimal uniform "
+            f"knots -- {mean_lsq:.1f} ({mean_splprep / mean_lsq:.2f}x). "
             + (
-                "splprep использует заметно больше параметров, чем нужно для "
-                "той же гарантии -- часть проигрыша сплайна DP+SED в step1/step2 "
-                "может быть артефактом FITPACK, а не фундаментальным свойством "
-                "кубических B-сплайнов."
+                "splprep uses noticeably more parameters than needed for the "
+                "same guarantee -- part of the spline's loss to DP+SED in "
+                "step1/step2 may be a FITPACK artifact, not a fundamental "
+                "property of cubic B-splines."
                 if mean_splprep > mean_lsq * 1.1
-                else "splprep не хуже равномерных узлов на этих треках -- "
-                "проигрыш сплайна DP+SED не объясняется неоптимальностью FITPACK."
+                else "splprep is no worse than uniform knots on these tracks -- "
+                "the spline's loss to DP+SED is not explained by FITPACK suboptimality."
             )
             + "\n"
         )

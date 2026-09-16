@@ -1,6 +1,6 @@
-"""Честный контракт фиттинга: ошибка <= tol на ГУСТОЙ сетке между
-соседними точками, а не только в самих точках (см. src/traj/spline.py,
-benchmarks/results/step0_diagnostics.md)."""
+"""Honest fitting contract: error <= tol on a DENSE grid between
+neighboring points, not just at the points themselves (see
+src/traj/spline.py, benchmarks/results/step0_diagnostics.md)."""
 
 import numpy as np
 
@@ -11,9 +11,9 @@ TOL = 10.0
 
 
 def _sharp_turn_track(seed: int = 0) -> Track:
-    """Резкий поворот ~90° + неравномерный dt (1..25с) — случай, где
-    интерполирующий сплайн склонен переколебаться между разреженными
-    узлами вблизи угла."""
+    """A sharp ~90° turn + uneven dt (1..25s) -- a case where the
+    interpolating spline tends to overshoot between sparse knots near the
+    corner."""
     rng = np.random.default_rng(seed)
     n1, n2 = 25, 25
     leg1 = np.column_stack([np.linspace(0, 500, n1), np.zeros(n1)])
@@ -27,9 +27,9 @@ def _sharp_turn_track(seed: int = 0) -> Track:
 
 
 def _stop_and_go_track(seed: int = 0) -> Track:
-    """Случайные броски направления + кластеры близких точек (стоянки),
-    dt в пределах 1..29с (как после чистки src/traj/clean.py, где dt <=
-    30с — резки не происходит)."""
+    """Random heading changes + clusters of nearby points (stops), dt
+    within 1..29s (as after cleaning by src/traj/clean.py, where dt <=
+    30s -- no split occurs)."""
     rng = np.random.default_rng(seed)
     pos = np.array([0.0, 0.0])
     t_cursor = 0.0
@@ -70,9 +70,9 @@ def test_dense_error_within_tol_stop_and_go():
 
 
 def test_densification_can_trigger():
-    """Хотя бы для части сложных треков фиттинг реально добавляет
-    synthetic-узлы (n_points_used > n_raw) — проверяем, что путь кода с
-    добавлением узлов действительно исполняется, а не просто недостижим."""
+    """For at least some hard tracks the fitter really does add synthetic
+    knots (n_points_used > n_raw) -- checks that the knot-adding code path
+    actually executes, not just that it's unreachable."""
     triggered = False
     for seed in range(10):
         track = _sharp_turn_track(seed)
@@ -84,8 +84,8 @@ def test_densification_can_trigger():
 
 
 def test_sp_max_error_matches_dense_check():
-    """sp.max_error, посчитанный внутри fit(), должен совпадать с
-    независимой проверкой dense_check на том же треке."""
+    """sp.max_error, computed inside fit(), must match the independent
+    dense_check on the same track."""
     track = _sharp_turn_track(seed=1)
     sp = fit(track, tol=TOL)
     max_err, _ = dense_check(track, sp)

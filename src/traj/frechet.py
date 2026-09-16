@@ -1,4 +1,4 @@
-"""Дискретная метрика Фреше (Eiter-Mannila) с numba и ранним выходом."""
+"""Discrete Frechet distance (Eiter-Mannila) with numba and early exit."""
 
 from __future__ import annotations
 
@@ -15,14 +15,14 @@ def _dist(a, b) -> float:
 
 @njit(cache=True, fastmath=True)
 def _discrete_frechet_dp(P: np.ndarray, Q: np.ndarray, threshold: float):
-    """Классическая ДП Eiter-Mannila.
+    """Classic Eiter-Mannila DP.
 
-    Ранний выход: ca[i][j] — минимальная по монотонным путям "цена" (максимум
-    попарных расстояний) достижения ячейки (i, j). Любой монотонный путь до
-    (n-1, m-1) проходит через ровно одну ячейку в каждой строке i, а его цена
-    не меньше min_j ca[i][j] (цены достижения этой ячейки). Значит если
-    min_j ca[i][j] > threshold, итоговое расстояние тоже > threshold — можно
-    прервать вычисление, не досчитывая оставшиеся строки.
+    Early exit: ca[i][j] is the minimum over monotone paths of the "cost"
+    (max of pairwise distances) of reaching cell (i, j). Any monotone path
+    to (n-1, m-1) passes through exactly one cell in each row i, and its
+    cost is at least min_j ca[i][j] (the cost of reaching that cell). So if
+    min_j ca[i][j] > threshold, the final distance is also > threshold --
+    computation can be aborted without finishing the remaining rows.
     """
     n = P.shape[0]
     m = Q.shape[0]
@@ -53,14 +53,14 @@ def _discrete_frechet_dp(P: np.ndarray, Q: np.ndarray, threshold: float):
 
 
 def lower_bound(P: np.ndarray, Q: np.ndarray) -> float:
-    """max(|start_a-start_b|, |end_a-end_b|) — нижняя граница Фреше."""
+    """max(|start_a-start_b|, |end_a-end_b|) -- a lower bound on Frechet distance."""
     d_start = float(np.hypot(*(P[0] - Q[0])))
     d_end = float(np.hypot(*(P[-1] - Q[-1])))
     return max(d_start, d_end)
 
 
 def distance(P: np.ndarray, Q: np.ndarray) -> float:
-    """Точная дискретная метрика Фреше между полилиниями P и Q."""
+    """Exact discrete Frechet distance between polylines P and Q."""
     P = np.ascontiguousarray(P, dtype=np.float64)
     Q = np.ascontiguousarray(Q, dtype=np.float64)
     value, _ = _discrete_frechet_dp(P, Q, np.inf)
@@ -68,12 +68,12 @@ def distance(P: np.ndarray, Q: np.ndarray) -> float:
 
 
 def distance_within(P: np.ndarray, Q: np.ndarray, threshold: float) -> tuple[float, bool]:
-    """Фреше с ранним выходом по `threshold`.
+    """Frechet distance with early exit at `threshold`.
 
-    Возвращает (значение, exact). Если lower_bound уже превышает threshold,
-    ДП не запускается вовсе. Если ДП прерывается раньше срока, возвращаемое
-    значение — валидная нижняя граница (>= threshold), exact=False. При
-    exact=True значение точное (могло оказаться и <=, и > threshold).
+    Returns (value, exact). If lower_bound already exceeds threshold, the
+    DP doesn't run at all. If the DP aborts early, the returned value is a
+    valid lower bound (>= threshold), exact=False. When exact=True the
+    value is exact (it could still be <= or > threshold).
     """
     lb = lower_bound(P, Q)
     if lb > threshold:

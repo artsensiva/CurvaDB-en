@@ -1,227 +1,98 @@
-# CurvaDB - Curve-Based Semantic Search Database
+# CurvaDB
 
-An experimental database that uses mathematical curves and space-filling curve indexing for semantic search, exploring whether curve-based representations can outperform traditional vector databases.
+Исследование: даёт ли хранение GPS-траекторий кубическими B-сплайнами
+выигрыш над классической схемой "упрощение Дугласом-Пекером (DP) +
+поиск по дискретной метрике Фреше"? Итог — отрицательный результат по
+сжатию для потребительского GPS; для точных данных выигрыш в
+проверенных условиях тоже не найден, но вопрос до конца не закрыт (см.
+гипотезу H1 в [docs/findings.md](docs/findings.md)). Проект завершается
+как исследование — следующий шаг не код, а интервью с отраслью (см.
+[docs/next_steps.md](docs/next_steps.md)).
 
-!!! посмотри https://github.com/artsensiva/CurvaDB/blob/main/suggestions_denkweg
+## Этапы
 
-## Overview
+| Этап/шаг | Вопрос | Ответ |
+|---|---|---|
+| A. Исходная идея | Семантический поиск через "кривые" над эмбеддингами? | Реализовано (Level 1-2), но не доведено до сравнения с baseline. |
+| B. Критика | Состоятельна ли идея математически? | Нет — 4 несвязанные задачи, порядок координат эмбеддинга произволен. Пивот на GPS-траектории. |
+| C. Проверка фактов | Пуста ли ниша, честно ли сравнение? | Ниша не пуста; сравнение "80КБ/2-4КБ" нечестное; рекомендованы 10-15 интервью — не проведены. |
+| D. Организация | — | Ветка `trajectory-pivot`, данные GeoLife, промпты файлами. |
+| step0 | Как наивный сплайн смотрится против DP? | Разгромно хуже (recall 0.707 против 0.997) — оказалась методическая ошибка (`step0_diagnostics.md`). |
+| step1 | Что покажет честная методика? | Recall почти сравнялся (0.972/0.996), но сжатие DP выигрывает на каждом tol (3.7x). |
+| step2 | Есть ли ниша сжатия по шуму/tol? | Узкая зона нашлась (tol=1-5м, sigma<=0.1м) — но только для RTK/лидарной точности. |
+| step3 | Выдержит ли гипотеза решающую проверку без привязки к ломаной? | Все три критерия (K1-K3) провалены; даже оракул не компактнее DP+SED. **Вывод step2 о нише отменён.** |
+| Резолюция | Что дальше? | Не код — 8-10 интервью с отраслью; порог возврата к коду ≥3/10. |
 
-**CurvaDB** represents documents as mathematical curves instead of static vectors, using:
-- **Hilbert curve indexing** for efficient spatial search
-- **Spline fitting** for continuous data representation (Level 2+)
-- **Functional PCA** for dimensionality reduction (Level 2+)
-- **Curve distance metrics** (Frechet, DTW) for semantic similarity
+Полная хронология с цифрами и коммитами — [docs/history.md](docs/history.md).
 
-## Current Status
+## Документы
 
-🚧 **In Development - Level 1**
+- [docs/history.md](docs/history.md) — полная история проекта, от
+  исходной идеи до резолюции.
+- [docs/findings.md](docs/findings.md) — итоги исследования: вопрос,
+  ключевые цифры, вывод, ограничения, открытые гипотезы H1/H2.
+- [docs/next_steps.md](docs/next_steps.md) — резолюция, план интервью,
+  порог возврата к коду, набросок эксперимента по H2.
+- [docs/blog_draft.md](docs/blog_draft.md) — черновик поста для
+  инженерной аудитории.
+- [docs/legacy.md](docs/legacy.md) — архив README до пивота на
+  траектории (исходная идея с эмбеддингами).
+- [docs/prompts/](docs/prompts/) — промпты step3-step5 (step0-step2
+  давались в чате, пересказаны в `docs/prompts/README.md`).
+- [benchmarks/results/](benchmarks/results/) — сырые результаты
+  каждого шага (step0.md, step0_diagnostics.md, step1.md, step2.md,
+  step3.md).
 
-- [x] Project specification complete
-- [x] Architecture designed
-- [ ] Core implementation (in progress)
-- [ ] Benchmarking suite
-- [ ] Production-ready
-
-## Quick Start
-
-### Installation
+## Установка
 
 ```bash
-# Clone repository
-git clone https://github.com/yourusername/CurvaDB.git
-cd CurvaDB
-
-# Create virtual environment
 python3 -m venv venv
-source venv/bin/activate  # or venv\Scripts\activate on Windows
-
-# Install dependencies
-pip install -r requirements.txt
+venv/bin/pip install -r requirements.txt
 ```
 
-### Basic Usage (Level 1)
+Данные — GeoLife Trajectories 1.3 (`data/geolife/<user_id>/Trajectory/*.plt`),
+в репозиторий не входят (см. `.gitignore`).
 
-```python
-from src.level1.minimal_db import MinimalCurveDB
-
-# Initialize database
-db = MinimalCurveDB(db_path='./my_db', p=16, n=8)
-
-# Add documents
-db.add_batch(
-    doc_ids=['doc1', 'doc2', 'doc3'],
-    texts=[
-        'Machine learning is fascinating',
-        'Deep neural networks are powerful',
-        'I love cooking pasta'
-    ]
-)
-
-# Search
-results = db.search('AI and neural networks', k=2)
-for doc_id, text, score in results:
-    print(f"{doc_id}: {text[:50]}... (score: {score:.3f})")
-
-# Close database
-db.close()
-```
-
-## Project Structure
-
-```
-CurvaDB/
-├── constitution.md          # Project principles and guidelines
-├── SPECIFY.md              # Technical specifications (Levels 1-3)
-├── roadmap.md              # Development roadmap
-├── README.md               # This file
-├── src/
-│   ├── level1/            # Minimal Hilbert Vector DB
-│   ├── level2/            # Full Curve-Based DB
-│   └── level3/            # Optimized Production System
-├── tests/                  # Unit and integration tests
-├── benchmarks/             # Benchmark suite and results
-├── examples/               # Usage examples
-└── docs/                   # Documentation
-
-```
-
-## Development Levels
-
-### Level 1: Minimal Hilbert Vector DB ✅ Current
-- Space-filling curve indexing of vector embeddings
-- ~200 lines of code
-- 10K documents
-- 5 days development
-
-### Level 2: Full Curve-Based DB 🔜 Next
-- True curve representation with splines
-- Functional PCA feature extraction
-- ~600 lines of code
-- 50K documents
-- 3 weeks development
-
-### Level 3: Optimized Production System 🔮 Future
-- Fast C++ curve distances (Fred library)
-- Parallel processing
-- REST API
-- ~2000 lines of code
-- 100K+ documents
-- 5 weeks development
-
-## Why Curves?
-
-Potential advantages over traditional vector databases:
-- **Compression**: Curve parameters use less memory than full vectors
-- **Smoothness**: Built-in noise reduction through continuous representation
-- **Derivatives**: Analytical derivatives available for free
-- **Temporal data**: Natural representation of time-series semantics
-- **Mathematical richness**: Wide array of curve operations
-
-## Benchmarks
-
-Performance targets for Level 1:
-- **Search Latency**: <100ms (p95) for 10K documents
-- **Recall@10**: ≥70% vs exhaustive cosine search
-- **Memory Usage**: <500MB for 10K documents
-- **Storage Size**: <50MB for 10K documents
-
-Detailed benchmark results will be available after Level 1 completion.
-
-## Documentation
-
-- [Constitution](constitution.md) - Project principles and standards
-- [Technical Specification](SPECIFY.md) - Detailed scope and requirements
-- [Roadmap](roadmap.md) - Development plan and timeline
-- [Architecture](docs/level1_architecture.md) - System design (coming soon)
-- [API Reference](docs/api.md) - API documentation (coming soon)
-
-## Development
-
-### Running Tests
+## Как воспроизвести
 
 ```bash
-# Run all tests
-pytest
+venv/bin/pytest tests/traj/                          # тесты
 
-# Run with coverage
-pytest --cov=src --cov-report=html
-
-# Run specific test file
-pytest tests/test_minimal_db.py
+venv/bin/python benchmarks/step0.py                  # первый (сломанный) замер
+venv/bin/python benchmarks/step1_clean.py             # чистка данных
+venv/bin/python benchmarks/step1_spline_fit.py         # честный густой фиттинг
+venv/bin/python benchmarks/step1_compression.py        # сжатие (гипотеза A)
+venv/bin/python benchmarks/step1_kinematics.py         # кинематика (гипотеза B)
+venv/bin/python benchmarks/step1_search.py             # recall@10
+venv/bin/python benchmarks/step2_crossover.py --pilot  # поиск ниши (пилот)
+venv/bin/python benchmarks/step2_crossover.py          # поиск ниши (полный прогон)
+venv/bin/python benchmarks/step3_decisive.py --pilot   # решающий эксперимент (пилот)
+venv/bin/python benchmarks/step3_decisive.py           # решающий эксперимент (полный прогон)
 ```
 
-### Code Quality
+Каждый скрипт пишет свою секцию в `benchmarks/results/<step>.md`.
 
-```bash
-# Format code
-black src/ tests/ examples/
+## Известные альтернативы
 
-# Lint code
-pylint src/
+- **PostGIS** ([`ST_FrechetDistance`](https://postgis.net/docs/ST_FrechetDistance.html)) —
+  дискретная метрика Фреше как встроенная функция SQL над `geometry`;
+  готовое индустриальное решение без необходимости писать свою ДП.
+- **[MobilityDB](https://mobilitydb.com/)** — расширение PostgreSQL/PostGIS
+  для траекторных данных (`tgeompoint` и т.п.), с временными операциями,
+  индексами и метриками схожести из коробки.
+- **Map-matching** (например, [Valhalla](https://github.com/valhalla/valhalla),
+  [OSRM](https://project-osrm.org/)) — привязка GPS-трека к дорожной сети;
+  другой подход к сжатию/представлению траектории, снимающий часть шума
+  за счёт внешней информации о графе дорог, а не только геометрии трека.
+- **Сглаживание Калманом** (constant-acceleration + RTS) — в step1
+  (`docs/findings.md`, `benchmarks/results/step1.md` §4) показал лучшую
+  среднюю точность восстановления скорости/ускорения среди всех трёх
+  сравненных методов, ценой заметно более низкого recall детекции
+  резких манёвров — альтернатива для задач, где важна кинематика, а не
+  геометрическое сжатие/поиск.
 
-# Type checking
-mypy src/
-```
+## Старый проект
 
-### Running Benchmarks
-
-```bash
-# Run Level 1 benchmarks
-python benchmarks/level1_bench.py
-
-# Generate visualizations
-python benchmarks/visualize_results.py
-```
-
-## Contributing
-
-This is currently an experimental research project. Contributions, ideas, and feedback are welcome!
-
-### Development Workflow
-1. Read [constitution.md](constitution.md) for project principles
-2. Check [roadmap.md](roadmap.md) for current priorities
-3. Create feature branch from `main`
-4. Follow code quality standards
-5. Write tests for new functionality
-6. Submit pull request with clear description
-
-## Research Philosophy
-
-This project follows a **research-first mindset**:
-- Every claim must be validated with benchmarks
-- Negative results are valuable and will be published
-- We prioritize learning over premature optimization
-- Honest comparison with existing solutions
-
-If curve-based representations don't outperform vectors, we will document why and share our findings.
-
-## License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-Built with:
-- [sentence-transformers](https://www.sbert.net/) - Text embeddings
-- [hilbertcurve](https://pypi.org/project/hilbertcurve/) - Space-filling curves
-- [scipy](https://scipy.org/) - Scientific computing
-- [scikit-fda](https://fda.readthedocs.io/) - Functional data analysis
-- [LMDB](https://lmdb.readthedocs.io/) - Key-value storage
-
-Inspired by research in:
-- Space-filling curves for indexing
-- Functional data analysis
-- Curve similarity metrics
-- Semantic search and information retrieval
-
-## Contact
-
-For questions, suggestions, or collaboration:
-- GitHub Issues: [Create an issue](https://github.com/yourusername/CurvaDB/issues)
-- Email: your.email@example.com
-
----
-
-**Status**: Level 1 Development
-**Version**: 0.1.0-dev
-**Last Updated**: 2025-11-18
+Level 1 (Hilbert-индекс над текстовыми эмбеддингами, `src/level1`) не
+развивается в этой ветке. Архив прежнего README — в
+[docs/legacy.md](docs/legacy.md).

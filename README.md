@@ -33,8 +33,8 @@
   ключевые цифры, вывод, ограничения, открытые гипотезы H1/H2.
 - [docs/next_steps.md](docs/next_steps.md) — резолюция, план интервью,
   порог возврата к коду, набросок эксперимента по H2.
-- [docs/blog_draft.md](docs/blog_draft.md) — текст поста для публикации, для
-  инженерной аудитории.
+- [docs/blog_draft.md](docs/blog_draft.md) — текст поста для публикации (для
+  инженерной аудитории).
 - [docs/legacy.md](docs/legacy.md) — архив README до пивота на
   траектории (исходная идея с эмбеддингами).
 - [docs/prompts/](docs/prompts/) — промпты step3-step5 (step0-step2

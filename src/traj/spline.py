@@ -1,20 +1,19 @@
-"""Фиттинг траекторий кубическими B-сплайнами (scipy.interpolate.splprep).
+"""Fitting trajectories with cubic B-splines (scipy.interpolate.splprep).
 
-Честный контракт: max_error — это ошибка на ГУСТОЙ сетке (>= PTS_PER_INTERVAL
-точек на интервал между каждой парой соседних точек исходного трека),
-измеренная как point-to-segment расстояние до прямого сегмента между этими
-двумя точками — а не только в самих точках (см.
-benchmarks/results/step0_diagnostics.md: старая версия контролировала
-ошибку исключительно в узлах и пропускала колебания между ними у 82%
-треков).
+Honest contract: max_error is the error on a DENSE grid (>= PTS_PER_INTERVAL
+points per interval between each pair of neighboring points of the source
+track), measured as point-to-segment distance to the straight segment
+between those two points -- not just at the points themselves (see
+benchmarks/results/step0_diagnostics.md: the old version only controlled
+error at the knots and missed oscillation between them for 82% of tracks).
 
-Если сплайн при s=0 (интерполяция) всё равно нарушает tol между какой-то
-парой соседних точек, в этот интервал добавляется synthetic-узел — точка
-на прямой между исходными точками в месте максимального отклонения
-(адаптивное сгущение, до MAX_DENSIFY_ROUNDS раундов). Только когда густая
-проверка проходит на s=0, включается прежний механизм роста `s`
-(бисекция) для компактности — но уже с густой ошибкой как критерием, а не
-ошибкой только в узлах.
+If the spline at s=0 (interpolation) still violates tol between some pair
+of neighboring points, a synthetic knot is added to that interval -- a
+point on the line between the source points at the location of maximum
+deviation (adaptive densification, up to MAX_DENSIFY_ROUNDS rounds). Only
+once the dense check passes at s=0 does the previous mechanism for growing
+`s` (bisection) kick in for compactness -- but now with the dense error as
+the criterion, not the error at the knots alone.
 """
 
 from __future__ import annotations
@@ -29,9 +28,9 @@ DEFAULT_TOL = 10.0
 DEGREE = 3
 MAX_ITER = 40
 S_HI_CAP_MULT = 1e6
-PTS_PER_INTERVAL = 10  # >= точек густой сетки на интервал между соседними точками
+PTS_PER_INTERVAL = 10  # >= dense-grid points per interval between neighboring points
 MAX_DENSIFY_ROUNDS = 8
-MAX_POINTS_MULT = 6  # верхняя граница числа точек (raw + synthetic) = MULT * n_raw
+MAX_POINTS_MULT = 6  # upper bound on point count (raw + synthetic) = MULT * n_raw
 
 
 @dataclass
@@ -40,11 +39,11 @@ class SplineFit:
     t_min: float
     t_max: float
     s: float
-    max_error: float  # густая ошибка (между метками, не только в них)
+    max_error: float  # dense error (between timestamps, not just at them)
     converged: bool
     n_control_points: int
     parametrization: str = "time"
-    n_points_used: int = 0  # raw + synthetic-узлы, добавленные при фиттинге
+    n_points_used: int = 0  # raw + synthetic knots added during fitting
 
 
 def _param_u(t: np.ndarray, xy: np.ndarray, mode: str) -> np.ndarray:
@@ -54,14 +53,14 @@ def _param_u(t: np.ndarray, xy: np.ndarray, mode: str) -> np.ndarray:
         total = cum[-1]
         return cum / total if total > 0 else np.linspace(0.0, 1.0, len(xy))
     if mode != "time":
-        raise ValueError(f"неизвестная параметризация: {mode!r}")
+        raise ValueError(f"unknown parametrization: {mode!r}")
     t_min, t_max = float(t.min()), float(t.max())
     span = t_max - t_min
     return (t - t_min) / span if span > 0 else np.linspace(0.0, 1.0, len(t))
 
 
 def _point_seg_dist(px: np.ndarray, py: np.ndarray, ax: float, ay: float, bx: float, by: float) -> np.ndarray:
-    """Point-to-segment расстояние (векторизовано по px, py; сегмент [a, b] скаляры)."""
+    """Point-to-segment distance (vectorized over px, py; segment [a, b] are scalars)."""
     abx, aby = bx - ax, by - ay
     ab2 = abx * abx + aby * aby
     if ab2 == 0.0:
@@ -74,9 +73,10 @@ def _point_seg_dist(px: np.ndarray, py: np.ndarray, ax: float, ay: float, bx: fl
 def _dense_scan(
     t0: np.ndarray, xy0: np.ndarray, tck: tuple, mode: str, pts_per_interval: int
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Для каждой пары соседних точек (t0, xy0) — густая выборка сплайна на
-    их интервале параметра u и max point-to-segment расстояние до прямого
-    сегмента между ними. Возвращает (per_interval_max, доля_u_худшей_точки)."""
+    """For each pair of neighboring points (t0, xy0) -- a dense sample of
+    the spline over their parameter interval u and the max point-to-segment
+    distance to the straight segment between them. Returns
+    (per_interval_max, fraction_of_u_of_worst_point)."""
     u0 = _param_u(t0, xy0, mode)
     n = len(t0)
     per_interval_max = np.empty(max(n - 1, 0))
@@ -93,8 +93,8 @@ def _dense_scan(
 
 
 def dense_check(track, spline: SplineFit, pts_per_interval: int = PTS_PER_INTERVAL) -> tuple[float, np.ndarray]:
-    """Независимая проверка густой ошибки на исходном треке (не зависит от
-    внутренних synthetic-узлов, использованных при фиттинге). Возвращает
+    """Independent check of the dense error on the source track (doesn't
+    depend on the internal synthetic knots used during fitting). Returns
     (max_error, per_interval_max)."""
     t = np.asarray(track.t, dtype=float)
     xy = np.asarray(track.xy, dtype=float)
@@ -106,10 +106,10 @@ def dense_check(track, spline: SplineFit, pts_per_interval: int = PTS_PER_INTERV
 def dense_max_error(
     t: np.ndarray, xy: np.ndarray, tck: tuple, mode: str = "time", pts_per_interval: int = PTS_PER_INTERVAL
 ) -> float:
-    """max точка-отрезок ошибка на густой сетке для произвольного tck
-    (например, из make_lsq_spline) относительно точек (t, xy) -- та же
-    метрика, что использует fit()/dense_check(), но без внутренней
-    логики подбора (densify/рост s)."""
+    """Max point-to-segment error on a dense grid for an arbitrary tck
+    (e.g. from make_lsq_spline) relative to points (t, xy) -- the same
+    metric that fit()/dense_check() use, but without the internal fitting
+    logic (densify/growing s)."""
     per_interval_max, _ = _dense_scan(np.asarray(t, dtype=float), np.asarray(xy, dtype=float), tck, mode, pts_per_interval)
     return float(per_interval_max.max()) if len(per_interval_max) else 0.0
 
@@ -123,21 +123,25 @@ def fit(
     max_densify_rounds: int = MAX_DENSIFY_ROUNDS,
     max_points_mult: int = MAX_POINTS_MULT,
 ) -> SplineFit:
-    """Подбирает кубический B-сплайн так, чтобы ошибка на ГУСТОЙ сетке между
-    каждой парой соседних исходных точек была <= tol (см. docstring модуля).
+    """Fits a cubic B-spline so that the error on a DENSE grid between
+    every pair of neighboring source points is <= tol (see the module
+    docstring).
 
-    1. s=0 (интерполяция) на исходных точках; если густая проверка не
-       проходит — добавляем по одной synthetic-точке в месте максимального
-       отклонения в каждом ещё нарушенном интервале (адаптивное сгущение,
-       линейная интерполяция t и xy вдоль прямого сегмента между исходными
-       точками), повторяем до max_densify_rounds раз или пока не упрёмся в
-       max_points_mult * n_raw точек.
-    2. Как только s=0 на (возможно дополненном) наборе точек проходит
-       густую проверку — растим `s` (как раньше: экспоненциальный рост +
-       бисекция), но критерий теперь густая ошибка, а не ошибка в узлах.
+    1. s=0 (interpolation) on the source points; if the dense check
+       fails, add one synthetic point at the location of maximum
+       deviation in each still-violated interval (adaptive
+       densification, linear interpolation of t and xy along the
+       straight segment between the source points), repeat up to
+       max_densify_rounds times or until we hit
+       max_points_mult * n_raw points.
+    2. Once s=0 on the (possibly augmented) point set passes the dense
+       check, grow `s` (as before: exponential growth + bisection), but
+       now the criterion is the dense error, not the error at the knots
+       alone.
 
-    Если даже после исчерпания бюджета sinthetic-узлов густая ошибка > tol,
-    возвращается лучший найденный (s=0) вариант с converged=False.
+    If even after exhausting the synthetic-knot budget the dense error is
+    still > tol, the best (s=0) variant found is returned with
+    converged=False.
     """
     t0 = np.asarray(track.t, dtype=float)
     xy0 = np.asarray(track.xy, dtype=float)
@@ -239,21 +243,22 @@ def fit(
 
 
 def sample(spline: SplineFit, n_points: int) -> np.ndarray:
-    """Равномерная выборка n_points точек вдоль параметра u в [0, 1]."""
+    """Uniform sample of n_points points along parameter u in [0, 1]."""
     u = np.linspace(0.0, 1.0, n_points)
     xs, ys = splev(u, spline.tck)
     return np.column_stack([xs, ys])
 
 
 def derivatives(spline: SplineFit, t) -> tuple[np.ndarray, np.ndarray]:
-    """Скорость и ускорение (м/с, м/с^2) в реальном времени `t` (секунды).
+    """Velocity and acceleration (m/s, m/s^2) at real time `t` (seconds).
 
-    Требует parametrization="time" (линейная связь u<->t); для "chord"
-    восстановление кинематики не реализовано (нужна отдельная инверсия
-    t(u), не нужная за пределами сравнения параметризаций в step1)."""
+    Requires parametrization="time" (a linear u<->t relationship); "chord"
+    kinematics recovery is not implemented (it would need a separate
+    inversion t(u), not needed beyond the parametrization comparison in
+    step1)."""
     if spline.parametrization != "time":
         raise NotImplementedError(
-            f"derivatives() не поддерживает parametrization={spline.parametrization!r}"
+            f"derivatives() does not support parametrization={spline.parametrization!r}"
         )
     t = np.asarray(t, dtype=float)
     span = spline.t_max - spline.t_min

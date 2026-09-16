@@ -1,5 +1,5 @@
-"""Упрощение ломаной: классический Дуглас-Пекер (shapely.simplify) и
-time-aware вариант с SED (synchronized Euclidean distance)."""
+"""Polyline simplification: classic Douglas-Peucker (shapely.simplify) and
+a time-aware variant with SED (synchronized Euclidean distance)."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ DEFAULT_TOL = 10.0
 
 
 def simplify(track, tol: float = DEFAULT_TOL) -> np.ndarray:
-    """Упрощает ломаную трека (xy, метры) алгоритмом Дугласа-Пекера.
+    """Simplifies a track's polyline (xy, meters) with the Douglas-Peucker algorithm.
 
-    preserve_topology=False даёт классический DP (GEOS), а не
-    топологически-сохраняющий вариант.
+    preserve_topology=False gives the classic DP (GEOS), not the
+    topology-preserving variant.
     """
     line = LineString(track.xy)
     simplified = line.simplify(tol, preserve_topology=False)
@@ -21,9 +21,9 @@ def simplify(track, tol: float = DEFAULT_TOL) -> np.ndarray:
 
 
 def simplify_with_indices(track, tol: float = DEFAULT_TOL) -> tuple[np.ndarray, np.ndarray]:
-    """Как simplify(), но также возвращает индексы сохранённых точек в
-    track.xy/track.t (DP не создаёт новых точек, только удаляет вершины,
-    поэтому такое сопоставление всегда возможно)."""
+    """Like simplify(), but also returns the indices of the retained
+    points in track.xy/track.t (DP never creates new points, only removes
+    vertices, so this mapping is always possible)."""
     xy = simplify(track, tol)
     orig = track.xy
     idx = np.empty(len(xy), dtype=int)
@@ -37,10 +37,10 @@ def simplify_with_indices(track, tol: float = DEFAULT_TOL) -> tuple[np.ndarray, 
 
 
 def _seds(t: np.ndarray, xy: np.ndarray, i0: int, i1: int) -> tuple[np.ndarray, np.ndarray]:
-    """SED каждой точки (i0, i1) до отрезка [i0, i1] — расстояние не до
-    ближайшей точки отрезка (как в DP), а до позиции, интерполированной
-    по ДОЛЕ ВРЕМЕНИ (Meratnia & de By, "TD-TR"): считаем, что между i0 и
-    i1 движение было бы равномерным по времени вдоль прямой."""
+    """SED of each point in (i0, i1) to the segment [i0, i1] -- distance
+    not to the nearest point of the segment (as in DP), but to the
+    position interpolated by TIME FRACTION (Meratnia & de By, "TD-TR"):
+    assumes motion between i0 and i1 was uniform in time along the line."""
     idx = np.arange(i0 + 1, i1)
     t0, t1 = t[i0], t[i1]
     frac = (t[idx] - t0) / (t1 - t0) if t1 > t0 else np.zeros(len(idx))
@@ -50,11 +50,11 @@ def _seds(t: np.ndarray, xy: np.ndarray, i0: int, i1: int) -> tuple[np.ndarray, 
 
 
 def simplify_sed_with_indices(track, tol: float = DEFAULT_TOL) -> tuple[np.ndarray, np.ndarray]:
-    """Time-aware упрощение: top-down алгоритм в духе Дугласа-Пекера, но
-    критерий разреза — SED (см. _seds), а не перпендикулярное расстояние
-    до отрезка. Строже пространственного DP при том же tol (учитывает,
-    что раскладка точек во времени тоже могла быть неравномерной), поэтому
-    обычно требует больше точек для того же tol."""
+    """Time-aware simplification: a top-down algorithm in the spirit of
+    Douglas-Peucker, but the split criterion is SED (see _seds) rather
+    than perpendicular distance to the segment. Stricter than spatial DP
+    at the same tol (it also accounts for uneven spacing of points in
+    time), so it usually needs more points for the same tol."""
     t, xy = track.t, track.xy
     n = len(t)
     keep = np.zeros(n, dtype=bool)

@@ -1,11 +1,11 @@
-"""Чистка GPS-треков: разрывы по времени/скорости, одиночные выбросы,
-bbox Пекина, повторный фильтр по числу точек.
+"""GPS track cleaning: time/speed breaks, single-point outliers, Beijing
+bbox, length refilter.
 
-Мотивация (benchmarks/results/step0_diagnostics.md,
-benchmarks/diagnose_fit.py): аномальные GPS-скачки и большие разрывы по
-времени внутри "трека" — главная причина, по которой сплайн не может
-держать tol между метками времени. Режем трек на сегменты там, где сырые
-данные физически не могут быть одним непрерывным треком.
+Motivation (benchmarks/results/step0_diagnostics.md,
+benchmarks/diagnose_fit.py): anomalous GPS jumps and large time gaps
+inside a "track" are the main reason the spline can't keep tol between
+timestamps. We cut a track into segments wherever the raw data physically
+cannot be one continuous track.
 """
 
 from __future__ import annotations
@@ -18,12 +18,13 @@ from traj.io import DEFAULT_DATA_DIR, DEFAULT_SEED, MAX_POINTS, MIN_POINTS, Trac
 
 MAX_DT_S = 30.0
 MAX_SPEED_MPS = 70.0
-# Пекин (муниципалитет), приблизительно — GeoLife записан почти целиком
-# внутри этих границ; служит защитой от единичных выбросов геокодирования.
+# Beijing (municipality), approximate -- GeoLife was recorded almost
+# entirely within these bounds; guards against isolated geocoding outliers.
 BEIJING_BBOX = (39.4, 41.6, 115.7, 117.5)  # lat_min, lat_max, lon_min, lon_max
 
-# Для load_clean_tracks: загружаем сырые треки без ограничения на длину —
-# фильтр 50..2000 применяется ПОСЛЕ резки, к сегментам, а не к сырому треку.
+# For load_clean_tracks: load raw tracks with no length cap -- the
+# 50..2000 filter is applied AFTER splitting, to the segments, not to the
+# raw track.
 _RAW_MIN_POINTS = 1
 _RAW_MAX_POINTS = 1_000_000
 
@@ -32,16 +33,16 @@ _RAW_MAX_POINTS = 1_000_000
 class CleanStats:
     n_tracks_in: int = 0
     n_points_in: int = 0
-    n_split_segments: int = 0  # доп. сегменты, порождённые резкой по разрывам
-    n_outliers_removed: int = 0  # одиночные точки-сегменты
+    n_split_segments: int = 0  # extra segments produced by break-splitting
+    n_outliers_removed: int = 0  # single-point segments
     n_points_dropped_bbox: int = 0
-    n_dropped_short_or_long: int = 0  # сегментов, не прошедших refilter длины
+    n_dropped_short_or_long: int = 0  # segments that failed the length refilter
     n_tracks_out: int = 0
     n_points_out: int = 0
 
 
 def _segment_breaks(t: np.ndarray, xy: np.ndarray) -> np.ndarray:
-    """Индексы начала новых сегментов (разрыв по dt или скорости перед ними)."""
+    """Indices where a new segment starts (a dt or speed break precedes it)."""
     dt = np.diff(t)
     dist = np.hypot(*np.diff(xy, axis=0).T)
     speed = np.divide(dist, dt, out=np.full_like(dist, np.inf), where=dt > 0)
@@ -71,7 +72,7 @@ def _drop_single_point_outliers(segments: list[Track]) -> list[Track]:
 
 
 def _contiguous_runs(mask: np.ndarray) -> list[tuple[int, int]]:
-    """[a, b) индексы непрерывных серий True в mask."""
+    """[a, b) index ranges of contiguous True runs in mask."""
     idx = np.nonzero(mask)[0]
     if len(idx) == 0:
         return []
@@ -82,10 +83,10 @@ def _contiguous_runs(mask: np.ndarray) -> list[tuple[int, int]]:
 
 
 def _apply_bbox(segments: list[Track], bbox: tuple[float, float, float, float]) -> list[Track]:
-    """Оставляет только точки внутри bbox; режет на подсегменты по местам
-    выпадения из bbox, а не просто выкидывает точки (иначе внутри
-    "сегмента" появился бы скрытый разрыв, который резка по dt/скорости
-    уже не увидит)."""
+    """Keeps only points inside bbox; splits into sub-segments at the
+    points where a segment leaves the bbox, instead of just dropping
+    points (otherwise a hidden gap would appear inside the "segment"
+    that the dt/speed split would no longer see)."""
     lat_min, lat_max, lon_min, lon_max = bbox
     out = []
     for s in segments:
@@ -114,8 +115,8 @@ def clean_tracks(
     min_points: int = MIN_POINTS,
     max_points: int = MAX_POINTS,
 ) -> tuple[list[Track], CleanStats]:
-    """Режет треки по разрывам dt/скорости, убирает одиночные выбросы,
-    ограничивает bbox Пекина, затем заново фильтрует по числу точек."""
+    """Splits tracks at dt/speed breaks, drops single-point outliers,
+    clips to the Beijing bbox, then refilters by point count."""
     stats = CleanStats(n_tracks_in=len(tracks), n_points_in=sum(len(tr.t) for tr in tracks))
 
     segments: list[Track] = []
@@ -150,8 +151,8 @@ def load_clean_tracks(
     min_points: int = MIN_POINTS,
     max_points: int = MAX_POINTS,
 ) -> tuple[list[Track], CleanStats]:
-    """Загружает `n` сырых треков (без ограничения длины — фильтр 50..2000
-    применяется после резки, к сегментам) и чистит их."""
+    """Loads `n` raw tracks (no length cap -- the 50..2000 filter is
+    applied after splitting, to the segments) and cleans them."""
     raw_tracks = load_tracks(
         data_dir=data_dir, n=n, min_points=_RAW_MIN_POINTS, max_points=_RAW_MAX_POINTS, seed=seed,
     )

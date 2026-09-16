@@ -104,7 +104,7 @@ Build a minimal working prototype that uses Hilbert curve indexing for vector em
    - Simple demo script
    - ~30 lines showing basic usage
 
-5. **Documentation** (`docs/level1.md`):
+5. **Documentation** (`docs/ru/level1.md`):
    - Architecture overview
    - Usage guide
    - Benchmark results
@@ -236,7 +236,7 @@ Implement true curve-based representation using splines and Functional PCA (FPCA
    - Visualize FPCA components
    - t-SNE/UMAP of curve features
 
-5. **Documentation** (`docs/level2.md`):
+5. **Documentation** (`docs/ru/level2.md`):
    - Curve representation theory
    - FPCA methodology
    - Benchmark analysis

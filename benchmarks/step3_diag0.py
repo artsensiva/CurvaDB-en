@@ -1,16 +1,17 @@
-"""Step3, п.0: проверка учёта step2 -- откуда средние n ровно 200.0 и 600.0.
+"""Step3, item 0: sanity-checking step2's accounting -- where the mean n
+values of exactly 200.0 and 600.0 come from.
 
-Воспроизводит ТОЧНО ту же процедуру, что step2_crossover.evaluate_cell/
-search_min_params для метода spline_time (лог-сетка из N_INTERNAL_GRID
-internal_tol относительно target_tol, честная ошибка -- true_curve_error
-против истинной кривой), но дополнительно печатает по каждому треку ВСЮ
-сетку internal_tol -> (n, err), не только выбранный минимум -- чтобы
-увидеть, откуда берётся круглое среднее n.
+Reproduces EXACTLY the same procedure as step2_crossover.evaluate_cell/
+search_min_params for the spline_time method (a log grid of
+N_INTERNAL_GRID internal_tol values relative to target_tol, honest error
+-- true_curve_error against the ground-truth curve), but additionally
+prints, per track, the WHOLE internal_tol -> (n, err) grid, not just the
+chosen minimum -- to see where the round mean n comes from.
 
-n = n_knots + 2*n_coeffs (см. step2_crossover._build_spline) -- считает
-скаляры (float64), не байты напрямую.
+n = n_knots + 2*n_coeffs (see step2_crossover._build_spline) -- counts
+scalars (float64), not bytes directly.
 
-Запуск: venv/bin/python benchmarks/step3_diag0.py
+Run: venv/bin/python benchmarks/step3_diag0.py
 """
 
 from __future__ import annotations
@@ -37,14 +38,14 @@ from _report_utils import upsert_section  # noqa: E402
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 OUT_MD = os.path.join(RESULTS_DIR, "step3.md")
-SECTION_HEADER = "## 0. Проверка учёта step2 -- откуда средние n=200.0 и n=600.0"
+SECTION_HEADER = "## 0. Sanity-checking step2's accounting -- where n=200.0 and n=600.0 come from"
 
 CELLS = [(0.02, 0.2), (5.0, 20.0)]
 
 
 def spline_build_with_tck(track, internal_tol, t_dense, true_xy_dense):
-    """Как step2_crossover._build_spline(mode='time'), но дополнительно
-    возвращает n_knots/n_coeffs/sp напрямую (та функция отдаёт только
+    """Like step2_crossover._build_spline(mode='time'), but additionally
+    returns n_knots/n_coeffs/sp directly (that function only returns
     n, nbytes, err)."""
     from step2_crossover import SPLINE_SEARCH_MAX_DENSIFY_ROUNDS, SPLINE_SEARCH_MAX_ITER, _spline_time_reconstruct
     from step2_crossover import true_curve_error as _true_err
@@ -70,19 +71,19 @@ def main():
 
     lines = [f"{SECTION_HEADER}\n"]
     lines.append(
-        "Воспроизводит процедуру `step2_crossover.evaluate_cell` для метода "
-        "spline_time дословно (лог-сетка internal_tol из "
-        f"{N_INTERNAL_GRID} точек относительно target_tol, честная ошибка -- "
-        "true_curve_error против истинной кривой на густой сетке), но "
-        "показывает ВСЮ сетку internal_tol на трек, а не только выбранный "
-        "минимум n. n = n_knots + 2*n_coeffs (скаляры float64, НЕ байты).\n"
+        "Reproduces `step2_crossover.evaluate_cell`'s procedure for the "
+        "spline_time method verbatim (a log grid of internal_tol with "
+        f"{N_INTERNAL_GRID} points relative to target_tol, honest error -- "
+        "true_curve_error against the ground-truth curve on a dense grid), "
+        "but shows the WHOLE internal_tol grid per track, not just the "
+        "chosen minimum n. n = n_knots + 2*n_coeffs (float64 scalars, NOT bytes).\n"
     )
 
     for sigma, tol in CELLS:
         lines.append(f"### sigma={sigma:g}, tol={tol:g}\n")
         grid = tol * np.logspace(-2, 1, N_INTERNAL_GRID)
-        lines.append("internal_tol сетка (м): " + ", ".join(f"{g:.4g}" for g in grid) + "\n")
-        lines.append("| seed | n_raw | достижимо | выбранный itol | n (выбр.) | n_knots | n_coeffs | err (выбр.) | вся сетка n@itol (err<=tol?) |")
+        lines.append("internal_tol grid (m): " + ", ".join(f"{g:.4g}" for g in grid) + "\n")
+        lines.append("| seed | n_raw | reachable | chosen itol | n (chosen) | n_knots | n_coeffs | err (chosen) | full grid n@itol (err<=tol?) |")
         lines.append("|---|---|---|---|---|---|---|---|---|")
 
         chosen_n_values = []
@@ -103,14 +104,14 @@ def main():
             if not reachable:
                 chosen_n_values.append(None)
                 grid_str = "; ".join(f"{n}@{itol:.3g}({'ok' if err <= tol else 'no'})" for itol, n, err, _, _ in grid_results)
-                lines.append(f"| {gseed} | {len(track.t)} | нет (первая точка сетки не проходит) | -- | -- | -- | -- | -- | {grid_str} |")
+                lines.append(f"| {gseed} | {len(track.t)} | no (first grid point fails) | -- | -- | -- | -- | -- | {grid_str} |")
                 continue
 
             best = min((g for g in grid_results if g[2] <= tol), key=lambda g: g[1])
             chosen_n_values.append(best[1])
             grid_str = "; ".join(f"{n}@{itol:.3g}({'ok' if err <= tol else 'no'})" for itol, n, err, _, _ in grid_results)
             lines.append(
-                f"| {gseed} | {len(track.t)} | да | {best[0]:.4g} | {best[1]} | {best[3]} | {best[4]} | "
+                f"| {gseed} | {len(track.t)} | yes | {best[0]:.4g} | {best[1]} | {best[3]} | {best[4]} | "
                 f"{best[2]:.4g} | {grid_str} |"
             )
 
@@ -119,12 +120,12 @@ def main():
             all_equal = len(set(reach_vals)) == 1
             mean_n = float(np.mean(reach_vals))
             lines.append(
-                f"\nДостижимо {len(reach_vals)}/{len(chosen_n_values)}; "
-                f"среднее n = {mean_n:.4g}; n у достижимых "
-                f"{'ВСЕ ОДИНАКОВЫ' if all_equal else 'разные'}: {sorted(set(reach_vals))}.\n"
+                f"\nReachable: {len(reach_vals)}/{len(chosen_n_values)}; "
+                f"mean n = {mean_n:.4g}; n across reachable tracks is "
+                f"{'ALL EQUAL' if all_equal else 'different'}: {sorted(set(reach_vals))}.\n"
             )
         else:
-            lines.append("\nНи один трек не достижим в этой клетке.\n")
+            lines.append("\nNo track is reachable in this cell.\n")
 
     body = "\n".join(lines) + "\n"
     upsert_section(OUT_MD, SECTION_HEADER, body)

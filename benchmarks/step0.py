@@ -1,10 +1,11 @@
-"""Step 0: честное сравнение сырой ломаной, DP-ломаной и сплайна.
+"""Step 0: an honest comparison of the raw polyline, the DP polyline, and
+the spline.
 
-Вопрос: выигрывает ли кубический B-сплайн у ломаной, упрощённой
-Дугласом-Пекером, хотя бы по одной оси (байты, latency, recall,
-ошибка скорости/ускорения). Отрицательный результат — тоже результат.
+Question: does the cubic B-spline beat the Douglas-Peucker-simplified
+polyline on at least one axis (bytes, latency, recall, velocity/
+acceleration error). A negative result is a result too.
 
-Запуск: venv/bin/python benchmarks/step0.py
+Run: venv/bin/python benchmarks/step0.py
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ TOL = 10.0
 SEED = 42
 N_QUERIES = 30
 K = 10
-MAX_ARC_POINTS = 3000  # защита от редких треков с аномальными GPS-скачками
+MAX_ARC_POINTS = 3000  # guard against rare tracks with anomalous GPS jumps
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 
 
@@ -55,14 +56,14 @@ class TrackRepr:
 
 
 def _spline_storage_bytes(sp: spline.SplineFit) -> int:
-    """Знания сплайна: узлы t + 2 массива коэффициентов (x, y), float64."""
+    """Spline footprint: knots t + 2 coefficient arrays (x, y), float64."""
     knots = len(sp.tck[0])
     coeffs = len(sp.tck[1][0])
     return (knots + 2 * coeffs) * 8
 
 
 def _arclength_resample(sp: spline.SplineFit, tol: float, n_fine: int = 4000) -> np.ndarray:
-    """Дискретизация сплайна с шагом ~tol по длине дуги."""
+    """Discretizes the spline with a step of ~tol along arc length."""
     u_fine = np.linspace(0.0, 1.0, n_fine)
     xf, yf = splev(u_fine, sp.tck)
     seg = np.hypot(np.diff(xf), np.diff(yf))
@@ -76,8 +77,9 @@ def _arclength_resample(sp: spline.SplineFit, tol: float, n_fine: int = 4000) ->
 
 
 def _smoothed_reference_derivatives(xy: np.ndarray, t: np.ndarray):
-    """Скорость/ускорение конечными разностями по Savitzky-Golay-сглаженному
-    сырому треку — эталон "истинной" кинематики без GPS-шума."""
+    """Velocity/acceleration via finite differences on the Savitzky-Golay-
+    smoothed raw track -- a reference for "true" kinematics without GPS
+    noise."""
     n = len(t)
     window = min(11, n - (1 - n % 2))
     smoothed = np.column_stack(
@@ -92,8 +94,8 @@ def _smoothed_reference_derivatives(xy: np.ndarray, t: np.ndarray):
 
 
 def _dp_derivatives(dp_xy: np.ndarray, dp_t: np.ndarray, t: np.ndarray):
-    """Кусочно-постоянная скорость DP-ломаной; ускорение тождественно 0
-    между вершинами (сама природа ломаной)."""
+    """Piecewise-constant velocity of the DP polyline; acceleration is
+    identically 0 between vertices (the nature of a polyline)."""
     seg = np.searchsorted(dp_t, t, side="right") - 1
     seg = np.clip(seg, 0, len(dp_t) - 2)
     dt = dp_t[seg + 1] - dp_t[seg]
@@ -137,9 +139,9 @@ def build_representation(track, tol: float) -> TrackRepr:
 
 
 def full_scan_top10(query_xy: np.ndarray, corpus, exclude_idx: int, k: int = K):
-    """Top-k по Фреше полным перебором корпуса; distance_within с текущим
-    худшим из top-k как порогом просто ускоряет отбрасывание заведомо
-    непроходящих кандидатов — каждый кандидат всё равно посещается."""
+    """Top-k by Frechet distance via full corpus scan; distance_within
+    with the current worst of the top-k as the threshold just speeds up
+    discarding hopeless candidates -- every candidate is still visited."""
     best: list[tuple[float, int]] = []
     for idx, cand_xy in corpus:
         if idx == exclude_idx:
@@ -171,11 +173,11 @@ def run(
 ) -> dict:
     t0 = time.time()
     tracks = load_tracks(n=n_tracks, seed=seed)
-    print(f"[n={n_tracks}] загружено {len(tracks)} треков за {time.time() - t0:.1f}s")
+    print(f"[n={n_tracks}] loaded {len(tracks)} tracks in {time.time() - t0:.1f}s")
 
     t0 = time.time()
     reprs = [build_representation(tr, tol) for tr in tracks]
-    print(f"[n={n_tracks}] построены DP/сплайн представления за {time.time() - t0:.1f}s")
+    print(f"[n={n_tracks}] built DP/spline representations in {time.time() - t0:.1f}s")
 
     rng = np.random.default_rng(seed)
     query_idx = rng.choice(len(tracks), size=min(n_queries, len(tracks)), replace=False)
@@ -204,8 +206,8 @@ def run(
             else:
                 recalls[kind].append(recall_at_k(raw_top10_cache[qi], got))
         print(
-            f"[n={n_tracks}] {kind}: полный скан {len(query_idx)} запросов "
-            f"за {time.time() - t_start:.1f}s"
+            f"[n={n_tracks}] {kind}: full scan of {len(query_idx)} queries "
+            f"in {time.time() - t_start:.1f}s"
         )
 
     def pct_ms(xs, p):
@@ -260,51 +262,51 @@ def run(
 def _write_md(path: str, s: dict) -> None:
     lengths = s["lengths"]
     lines = [
-        "# Step 0: сплайн vs DP-ломаная vs сырая ломаная\n",
-        f"Треков: {s['n_tracks']}, tol = {s['tol']} м.\n",
+        "# Step 0: spline vs DP polyline vs raw polyline\n",
+        f"Tracks: {s['n_tracks']}, tol = {s['tol']} m.\n",
         (
-            f"Длина треков (точек): min={min(lengths)}, "
+            f"Track length (points): min={min(lengths)}, "
             f"median={int(np.median(lengths))}, max={max(lengths)}, "
             f"mean={np.mean(lengths):.0f}.\n"
         ),
         (
-            f"Среднее число вершин DP-ломаной: {s['n_dp_mean']:.1f}. "
-            f"Среднее число контрольных точек сплайна: {s['n_spline_cp_mean']:.1f}. "
-            f"Несошедшихся фиттингов: {s['n_nonconverged']}/{s['n_tracks']}.\n"
+            f"Mean number of DP polyline vertices: {s['n_dp_mean']:.1f}. "
+            f"Mean number of spline control points: {s['n_spline_cp_mean']:.1f}. "
+            f"Non-converged fits: {s['n_nonconverged']}/{s['n_tracks']}.\n"
         ),
-        "\n## Байт на трек (float64)\n",
-        "| Представление | Байт/трек |",
+        "\n## Bytes per track (float64)\n",
+        "| Representation | Bytes/track |",
         "|---|---|",
         f"| raw | {s['bytes_raw']:.0f} |",
-        f"| DP-ломаная | {s['bytes_dp']:.0f} |",
-        f"| сплайн (узлы + коэффициенты) | {s['bytes_spline']:.0f} |",
-        "\n## Latency top-10, полный перебор, 30 запросов (мс)\n",
-        "| Представление | p50 | p95 |",
+        f"| DP polyline | {s['bytes_dp']:.0f} |",
+        f"| spline (knots + coefficients) | {s['bytes_spline']:.0f} |",
+        "\n## Top-10 latency, full scan, 30 queries (ms)\n",
+        "| Representation | p50 | p95 |",
         "|---|---|---|",
     ]
     for kind in ["raw", "dp", "spline_same", "spline_arclen"]:
         lines.append(f"| {kind} | {s['latency_p50'][kind]:.2f} | {s['latency_p95'][kind]:.2f} |")
 
     lines += [
-        "\n## Recall@10 относительно Фреше на сырых треках\n",
-        "| Представление | Recall@10 |",
+        "\n## Recall@10 against Frechet distance on raw tracks\n",
+        "| Representation | Recall@10 |",
         "|---|---|",
     ]
     for kind in ["dp", "spline_same", "spline_arclen"]:
         lines.append(f"| {kind} | {s['recall_at_10'][kind]:.3f} |")
 
     lines += [
-        "\n## Ошибка скорости/ускорения относительно конечных разностей "
-        "по сглаженному сырому треку\n",
-        "| Представление | Скорость, м/с (медиана) | Ускорение, м/с² (медиана) |",
+        "\n## Velocity/acceleration error against finite differences "
+        "on the smoothed raw track\n",
+        "| Representation | Velocity, m/s (median) | Acceleration, m/s² (median) |",
         "|---|---|---|",
-        f"| сплайн | {s['v_err_spline']:.3f} | {s['a_err_spline']:.3f} |",
-        f"| DP-ломаная | {s['v_err_dp']:.3f} | {s['a_err_dp']:.3f} |",
+        f"| spline | {s['v_err_spline']:.3f} | {s['a_err_spline']:.3f} |",
+        f"| DP polyline | {s['v_err_dp']:.3f} | {s['a_err_dp']:.3f} |",
         (
-            "\nПримечание: DP-ломаная кусочно-линейна, поэтому её ускорение "
-            "тождественно 0 между вершинами — ошибка ускорения DP показывает, "
-            "насколько велико реальное ускорение, которое ломаная принципиально "
-            "не может передать.\n"
+            "\nNote: the DP polyline is piecewise-linear, so its "
+            "acceleration is identically 0 between vertices -- the DP "
+            "acceleration error shows how large the real acceleration is "
+            "that a polyline fundamentally cannot represent.\n"
         ),
     ]
 

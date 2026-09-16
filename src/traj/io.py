@@ -1,4 +1,4 @@
-"""Загрузка GPS-треков GeoLife и их проекция в метры."""
+"""Loading GeoLife GPS tracks and projecting them into meters."""
 
 from __future__ import annotations
 
@@ -21,14 +21,14 @@ DEFAULT_DATA_DIR = "data/geolife"
 @dataclass
 class Track:
     track_id: str
-    lat: np.ndarray  # исходные градусы
-    lon: np.ndarray  # исходные градусы
-    t: np.ndarray  # секунды от начала трека
-    xy: np.ndarray  # Nx2, метры, equirectangular от общей опорной точки
+    lat: np.ndarray  # original degrees
+    lon: np.ndarray  # original degrees
+    t: np.ndarray  # seconds since track start
+    xy: np.ndarray  # Nx2, meters, equirectangular from a shared reference point
 
 
 def _parse_plt(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-    """Читает .plt, отбрасывая дубликаты по времени. None, если файл пуст/битый."""
+    """Reads a .plt file, dropping time-based duplicates. None if the file is empty/corrupt."""
     lat: list[float] = []
     lon: list[float] = []
     t: list[float] = []
@@ -77,12 +77,12 @@ def load_tracks(
     max_points: int = MAX_POINTS,
     seed: int = DEFAULT_SEED,
 ) -> list[Track]:
-    """Загружает до `n` треков длиной [min_points, max_points] точек.
+    """Loads up to `n` tracks with [min_points, max_points] points.
 
-    Порядок файлов фиксируется через `seed`. Опорная точка для проекции —
-    среднее по центроидам ВСЕХ загруженных треков (каждый трек с равным
-    весом, независимо от числа точек в нём), а не центр каждого трека
-    отдельно.
+    File order is fixed via `seed`. The projection's reference point is the
+    mean of the centroids of ALL loaded tracks (each track weighted
+    equally, regardless of its point count), not the center of each track
+    individually.
     """
     data_dir = Path(data_dir)
     files = _discover_files(data_dir)
@@ -105,7 +105,7 @@ def load_tracks(
         raw.append((track_id, lat, lon, t))
 
     if not raw:
-        raise RuntimeError(f"Не найдено ни одного подходящего трека в {data_dir}")
+        raise RuntimeError(f"No suitable tracks found in {data_dir}")
 
     centroids_lat = np.array([r[1].mean() for r in raw])
     centroids_lon = np.array([r[2].mean() for r in raw])

@@ -1,43 +1,42 @@
-# Step 0: сплайн vs DP-ломаная vs сырая ломаная
+# Step 0: spline vs DP polyline vs raw polyline
 
-Треков: 200, tol = 10.0 м.
+Tracks: 200, tol = 10.0 m.
 
-Длина треков (точек): min=55, median=412, max=1979, mean=576.
+Track length (points): min=55, median=412, max=1979, mean=576.
 
-Среднее число вершин DP-ломаной: 52.1. Среднее число контрольных точек сплайна: 125.8. Несошедшихся фиттингов: 0/200.
+Mean number of DP polyline vertices: 52.1. Mean number of spline control points: 125.8. Non-converged fits: 0/200.
 
 
-## Байт на трек (float64)
+## Bytes per track (float64)
 
-| Представление | Байт/трек |
+| Representation | Bytes/track |
 |---|---|
 | raw | 9224 |
-| DP-ломаная | 833 |
-| сплайн (узлы + коэффициенты) | 3052 |
+| DP polyline | 833 |
+| spline (knots + coefficients) | 3052 |
 
-## Latency top-10, полный перебор, 30 запросов (мс)
+## Top-10 latency, full scan, 30 queries (ms)
 
-| Представление | p50 | p95 |
+| Representation | p50 | p95 |
 |---|---|---|
 | raw | 35.67 | 210.66 |
 | dp | 1.55 | 2.46 |
 | spline_same | 1.65 | 3.31 |
 | spline_arclen | 255.84 | 3050.38 |
 
-## Recall@10 относительно Фреше на сырых треках
+## Recall@10 against Frechet distance on raw tracks
 
-| Представление | Recall@10 |
+| Representation | Recall@10 |
 |---|---|
 | dp | 0.997 |
 | spline_same | 0.707 |
 | spline_arclen | 0.707 |
 
-## Ошибка скорости/ускорения относительно конечных разностей по сглаженному сырому треку
+## Velocity/acceleration error against finite differences on the smoothed raw track
 
-| Представление | Скорость, м/с (медиана) | Ускорение, м/с² (медиана) |
+| Representation | Velocity, m/s (median) | Acceleration, m/s² (median) |
 |---|---|---|
-| сплайн | 0.875 | 0.152 |
-| DP-ломаная | 1.519 | 0.179 |
+| spline | 0.875 | 0.152 |
+| DP polyline | 1.519 | 0.179 |
 
-Примечание: DP-ломаная кусочно-линейна, поэтому её ускорение тождественно 0 между вершинами — ошибка ускорения DP показывает, насколько велико реальное ускорение, которое ломаная принципиально не может передать.
-
+Note: the DP polyline is piecewise-linear, so its acceleration is identically 0 between vertices -- the DP acceleration error shows how large the real acceleration is that a polyline fundamentally cannot represent.

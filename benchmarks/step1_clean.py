@@ -1,6 +1,6 @@
-"""Step 1, п.1: чистка треков — сколько треков/точек отброшено.
+"""Step 1, item 1: track cleaning -- how many tracks/points were dropped.
 
-Запуск: venv/bin/python benchmarks/step1_clean.py
+Run: venv/bin/python benchmarks/step1_clean.py
 """
 
 from __future__ import annotations
@@ -18,28 +18,28 @@ SEED = 42
 N_TRACKS = 200
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 OUT_MD = os.path.join(RESULTS_DIR, "step1.md")
-TITLE = "# Step 1: чистка данных, честный фиттинг сплайна, A/B\n"
-SECTION_HEADER = "## 1. Чистка треков"
+TITLE = "# Step 1: data cleaning, honest spline fitting, A/B\n"
+SECTION_HEADER = "## 1. Track cleaning"
 
 
 def _section_md(stats) -> str:
     lines = [
         f"{SECTION_HEADER}\n",
         (
-            f"Параметры: разрыв по времени > {MAX_DT_S:.0f}с ИЛИ скорость > "
-            f"{MAX_SPEED_MPS:.0f} м/с — резать; одиночные точки-сегменты — "
-            f"выбросить; bbox Пекина {BEIJING_BBOX} (lat_min, lat_max, lon_min, "
-            "lon_max); затем заново фильтр 50..2000 точек на сегмент.\n"
+            f"Parameters: a time gap > {MAX_DT_S:.0f}s OR speed > "
+            f"{MAX_SPEED_MPS:.0f} m/s -- split; single-point segments -- "
+            f"drop; Beijing bbox {BEIJING_BBOX} (lat_min, lat_max, lon_min, "
+            "lon_max); then refilter to 50..2000 points per segment.\n"
         ),
-        f"Загружено сырых треков: {stats.n_tracks_in}, точек: {stats.n_points_in}.\n",
-        "| Этап | Значение |",
+        f"Loaded raw tracks: {stats.n_tracks_in}, points: {stats.n_points_in}.\n",
+        "| Stage | Value |",
         "|---|---|",
-        f"| доп. сегментов от резки по разрывам | {stats.n_split_segments} |",
-        f"| одиночных точек-выбросов убрано | {stats.n_outliers_removed} |",
-        f"| точек отброшено вне bbox Пекина | {stats.n_points_dropped_bbox} |",
-        f"| сегментов отброшено фильтром длины (не 50..2000) | {stats.n_dropped_short_or_long} |",
-        f"| **итог: треков** | {stats.n_tracks_out} (из {stats.n_tracks_in} исходных) |",
-        f"| **итог: точек** | {stats.n_points_out} (из {stats.n_points_in} исходных) |",
+        f"| extra segments from break-splitting | {stats.n_split_segments} |",
+        f"| single-point outliers removed | {stats.n_outliers_removed} |",
+        f"| points dropped outside Beijing bbox | {stats.n_points_dropped_bbox} |",
+        f"| segments dropped by length filter (not 50..2000) | {stats.n_dropped_short_or_long} |",
+        f"| **total: tracks** | {stats.n_tracks_out} (out of {stats.n_tracks_in} original) |",
+        f"| **total: points** | {stats.n_points_out} (out of {stats.n_points_in} original) |",
         "",
     ]
     return "\n".join(lines) + "\n"

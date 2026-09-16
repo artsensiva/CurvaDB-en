@@ -1,24 +1,24 @@
-"""Фиттинг траекторий кубическими B-сплайнами методом наименьших квадратов
-по x(t), y(t) напрямую (`scipy.interpolate.make_lsq_spline`) -- БЕЗ
-привязки к ломаной зашумлённых точек (в отличие от `spline.fit()`, см.
-его docstring и docs/prompts/step3.md: контракт "держаться у ломаной"
-не даёт старому фиттеру сглаживать шум). Сплайн не обязан проходить
-через зашумлённые точки -- поэтому ошибка здесь считается ПРЯМЫМ
-Евклидовым остатком в самих точках (t_i, xy_i), а не point-to-segment
-до ломаной (`spline.dense_max_error`).
+"""Fitting trajectories with cubic B-splines by least squares directly on
+x(t), y(t) (`scipy.interpolate.make_lsq_spline`) -- WITHOUT tethering to
+the noisy points' polyline (unlike `spline.fit()`; see its docstring and
+docs/prompts/step3.md: the "stay near the polyline" contract prevents the
+old fitter from smoothing noise). The spline isn't required to pass
+through the noisy points -- so error here is the DIRECT Euclidean residual
+at the points themselves (t_i, xy_i), not point-to-segment distance to the
+polyline (`spline.dense_max_error`).
 
-Два способа расстановки внутренних узлов:
-- "uniform" -- равномерно по индексу вдоль t;
-- "adaptive" -- двухпроходно: равномерный пробный фит с m узлами,
-  остатки в точках, перераспределение тех же m узлов по кумулятивной
-  сумме |остатков| (там, где пробный фит хуже всего описывает данные --
-  больше узлов), повторный фит. Кривизна истинной кривой НЕ используется
-  -- только остатки зашумлённого пробного фита.
+Two ways of placing internal knots:
+- "uniform" -- evenly spaced by index along t;
+- "adaptive" -- two-pass: a uniform trial fit with m knots, residuals at
+  the points, redistribute the same m knots by cumulative sum of
+  |residuals| (more knots where the trial fit describes the data worst),
+  refit. The true curve's curvature is NOT used -- only the residuals of
+  the noisy trial fit.
 
-Внутренние узлы всегда выбираются как ПОДМНОЖЕСТВО реальных отсчётов t
-(а не произвольные вещественные позиции) -- это автоматически
-удовлетворяет условию Шёнберга-Уитни (между любыми соседними узлами
-есть хотя бы один отсчёт данных), которое требует `make_lsq_spline`.
+Internal knots are always chosen as a SUBSET of the actual t samples
+(rather than arbitrary real-valued positions) -- this automatically
+satisfies the Schoenberg-Whitney condition (at least one data sample
+between any two neighboring knots) required by `make_lsq_spline`.
 """
 
 from __future__ import annotations
@@ -34,10 +34,10 @@ MAX_ITER = 40
 
 @dataclass
 class LsqSplineFit:
-    tck: tuple  # (knots, [cx, cy], k) -- совместимо по форме со SplineFit.tck
+    tck: tuple  # (knots, [cx, cy], k) -- shape-compatible with SplineFit.tck
     t_min: float
     t_max: float
-    max_error: float  # max Евклидов остаток в точках (t_i, xy_i), НЕ до ломаной
+    max_error: float  # max Euclidean residual at the points (t_i, xy_i), NOT to the polyline
     converged: bool
     n_control_points: int
     knot_mode: str  # "uniform" | "adaptive" | "oracle"
@@ -45,10 +45,10 @@ class LsqSplineFit:
 
 
 def _pick_indices(n: int, m: int, weights: np.ndarray | None = None) -> np.ndarray:
-    """m строго различных индексов в (0, n-1) -- внутренние узлы как
-    подмножество отсчётов данных (гарантирует условие Шёнберга-Уитни).
-    weights (длина n, опционально) -- веса точек для смещения индексов к
-    зонам с большим весом (адаптивная расстановка); None -- равномерно."""
+    """m strictly distinct indices in (0, n-1) -- internal knots as a
+    subset of data samples (guarantees the Schoenberg-Whitney condition).
+    weights (length n, optional) -- point weights biasing indices toward
+    higher-weight regions (adaptive placement); None -- uniform."""
     if m <= 0:
         return np.empty(0, dtype=int)
     if weights is None:
@@ -113,16 +113,17 @@ def _make_fit(bs: BSpline, t: np.ndarray, err: float, converged: bool, knot_mode
 
 
 def _bisect_fit(t: np.ndarray, xy: np.ndarray, tol: float, k: int, max_iter: int, knot_mode: str) -> LsqSplineFit:
-    """Растим число внутренних узлов m (экспоненциально), пока честная
-    ошибка (прямой остаток в точках) не станет <= tol, затем бисекция на
-    минимальное m -- по аналогии с ростом `s`/бисекцией в spline.fit().
+    """Grow the number of internal knots m (exponentially) until the
+    honest error (direct residual at the points) is <= tol, then bisect
+    down to the minimal m -- analogous to growing `s`/bisection in
+    spline.fit().
 
-    m_max -- теоретический потолок (n-k-2, столько узлов ещё оставляет
-    систему МНК переопределённой). У самой границы (почти-интерполяция
-    на зашумлённых данных) изредка возникает численный разрыв ошибки на
-    1-2 порядка -- поэтому в ходе роста отслеживается ЛУЧШИЙ (не
-    последний) результат; если tol недостижим, возвращается именно он,
-    а не потенциально испорченная попытка у самой границы m_max."""
+    m_max -- the theoretical ceiling (n-k-2, the point at which the least
+    squares system stops being overdetermined). Near that boundary
+    (near-interpolation on noisy data), the error occasionally jumps by
+    1-2 orders of magnitude -- so growth tracks the BEST (not the last)
+    result; if tol is unreachable, that best result is returned rather
+    than a potentially degraded attempt right at m_max."""
     n = len(t)
     m_max = max(n - k - 2, 0)
     build = _build_adaptive if knot_mode == "adaptive" else _build_uniform
@@ -133,7 +134,7 @@ def _bisect_fit(t: np.ndarray, xy: np.ndarray, tol: float, k: int, max_iter: int
         return _make_fit(best_bs, t, best_err, best_err <= tol, knot_mode, 0)
 
     m_lo, m_hi = 0, 1
-    success = None  # (bs, err, m) -- первое m, достигшее tol
+    success = None  # (bs, err, m) -- first m to reach tol
     grown = 0
     while grown < max_iter:
         try:
@@ -151,7 +152,7 @@ def _bisect_fit(t: np.ndarray, xy: np.ndarray, tol: float, k: int, max_iter: int
         grown += 1
 
     if success is None:
-        # tol недостижим при m <= m_max -- лучший найденный результат
+        # tol is unreachable for m <= m_max -- return the best result found
         return _make_fit(best_bs, t, best_err, False, knot_mode, best_m)
 
     best_bs, best_err, best_m = success
@@ -172,35 +173,35 @@ def _bisect_fit(t: np.ndarray, xy: np.ndarray, tol: float, k: int, max_iter: int
 
 
 def fit_uniform(track, tol: float, k: int = DEGREE, max_iter: int = MAX_ITER) -> LsqSplineFit:
-    """Равномерные (по индексу отсчётов) внутренние узлы, бисекция по их
-    числу до честного остатка <= tol в самих (зашумлённых) точках трека."""
+    """Uniform (by sample index) internal knots, bisecting their count
+    down to the honest residual <= tol at the track's own (noisy) points."""
     t = np.asarray(track.t, dtype=float)
     xy = np.asarray(track.xy, dtype=float)
     return _bisect_fit(t, xy, tol, k, max_iter, knot_mode="uniform")
 
 
 def fit_adaptive(track, tol: float, k: int = DEGREE, max_iter: int = MAX_ITER) -> LsqSplineFit:
-    """Как fit_uniform, но на каждом кандидате m -- двухпроходный фит
-    (пробный равномерный -> остатки -> перераспределение узлов по
-    кумулятивному остатку -> повторный фит)."""
+    """Like fit_uniform, but at each candidate m -- a two-pass fit (trial
+    uniform fit -> residuals -> redistribute knots by cumulative residual
+    -> refit)."""
     t = np.asarray(track.t, dtype=float)
     xy = np.asarray(track.xy, dtype=float)
     return _bisect_fit(t, xy, tol, k, max_iter, knot_mode="adaptive")
 
 
 def fit_oracle(t_dense: np.ndarray, true_xy_dense: np.ndarray, tol: float, k: int = DEGREE, max_iter: int = MAX_ITER) -> LsqSplineFit:
-    """Фит НАПРЯМУЮ на плотную истинную (бесшумную) кривую, равномерные
-    узлы, бисекция m по ошибке на той же густой сетке. Не знает о шуме
-    или разрежённости наблюдений -- справочная нижняя граница
-    представления геометрии при заданном tol (используется только для
-    оракульской таблицы в бенчмарке, не участвует в критериях)."""
+    """Fits DIRECTLY to the dense ground-truth (noise-free) curve, uniform
+    knots, bisecting m by the error on that same dense grid. Knows nothing
+    about noise or observation sparsity -- a reference lower bound on
+    geometry representation at a given tol (used only for the oracle table
+    in the benchmark, not part of the criteria)."""
     t = np.asarray(t_dense, dtype=float)
     xy = np.asarray(true_xy_dense, dtype=float)
     return _bisect_fit(t, xy, tol, k, max_iter, knot_mode="oracle")
 
 
 def reconstruct(fit: LsqSplineFit, t) -> np.ndarray:
-    """Восстанавливает xy сплайна fit в моментах времени t."""
+    """Reconstructs the fit spline's xy at times t."""
     knots, c_list, k = fit.tck
     c = np.column_stack(c_list)
     bs = BSpline(knots, c, k)

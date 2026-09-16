@@ -1,8 +1,9 @@
-"""Step 1, п.3: recall@10 сплайна на треках с густой ошибкой <= 2*tol
-(после чистки п.1 и честного фиттинга п.2) — проверка причины низкого
-recall в step0 (уже известна: колебания сплайна между метками времени).
+"""Step 1, item 3: spline recall@10 on tracks with dense error <= 2*tol
+(after cleaning in item 1 and honest fitting in item 2) -- checking the
+cause of low recall in step0 (already known: spline oscillation between
+timestamps).
 
-Запуск: venv/bin/python benchmarks/step1_recall_check.py
+Run: venv/bin/python benchmarks/step1_recall_check.py
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ SEED = 42
 N_TRACKS = 200
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 OUT_MD = os.path.join(RESULTS_DIR, "step1.md")
-SECTION_HEADER = "## 3. Recall@10 на треках с густой ошибкой <= 2·tol"
+SECTION_HEADER = "## 3. Recall@10 on tracks with dense error <= 2·tol"
 
 
 def main() -> None:
@@ -58,11 +59,11 @@ def main() -> None:
     print(f"recall@10 dp={mean_recall_dp:.3f} spline={mean_recall_spline:.3f} (n_queries={n_queries})")
 
     line = (
-        f"На {len(good_idx)}/{len(reprs)} очищенных треках с густой ошибкой сплайна <= 2·tol "
-        f"({n_queries} запросов из этой же группы, корпус — все {len(reprs)} треков): "
-        f"recall@10 DP = {mean_recall_dp:.3f}, recall@10 исправленного сплайна = "
-        f"{mean_recall_spline:.3f} — против 0.997/0.707 в step0.md (сломанный фиттинг, "
-        "без чистки данных)."
+        f"On {len(good_idx)}/{len(reprs)} cleaned tracks with spline dense error <= 2·tol "
+        f"({n_queries} queries from that same group, corpus -- all {len(reprs)} tracks): "
+        f"recall@10 DP = {mean_recall_dp:.3f}, recall@10 fixed spline = "
+        f"{mean_recall_spline:.3f} -- vs 0.997/0.707 in step0.md (broken fitting, "
+        "no data cleaning)."
     )
     body = f"{SECTION_HEADER}\n\n{line}\n"
     upsert_section(OUT_MD, SECTION_HEADER, body)

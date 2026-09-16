@@ -1,21 +1,20 @@
-"""Диагностика фиттинга сплайна: почему recall@10 сплайна ниже DP.
+"""Spline fitting diagnostics: why the spline's recall@10 is lower than DP's.
 
-Консолидирует диагностические скрипты прошлой сессии:
-- §1: почему spline_same и spline_arclen дают одинаковый recall (0.707) —
-  совпадение точек по числу или эффект метрики Фреше на разной плотности
-  дискретизации одной и той же кривой.
-- §2: густая проверка ошибки сплайна между метками времени (20 точек на
-  интервал) — отношение длин дуг, max-отклонение от сырой ломаной, доля
-  треков, нарушающих tol/2tol/5tol/10tol.
-- §3: то же для DP-ломаной (структурная проверка отклонения raw-точек).
-- §4 (новое): max dt и разброс dt (std, IQR) внутри трека, корреляция с
-  уже найденными причинами (max_gap, min_dt, span, n_raw).
+Consolidates diagnostic scripts from a previous session:
+- §1: why spline_same and spline_arclen give the same recall (0.707) --
+  a coincidence of point counts, or an effect of the Frechet metric on
+  different sampling densities of the same curve.
+- §2: dense check of spline error between timestamps (20 points per
+  interval) -- arc-length ratio, max deviation from the raw polyline,
+  fraction of tracks violating tol/2tol/5tol/10tol.
+- §3: same for the DP polyline (structural check of raw-point deviation).
+- §4 (new): max dt and dt spread (std, IQR) within a track, correlation
+  with the causes already found (max_gap, min_dt, span, n_raw).
 
-Результаты воспроизводят benchmarks/results/step0_diagnostics.md; скрипт
-предназначен для повторного запуска после исправлений (clean.py, spline.py)
-чтобы проверить эффект.
+Results reproduce benchmarks/results/step0_diagnostics.md; the script is
+meant to be re-run after fixes (clean.py, spline.py) to check the effect.
 
-Запуск: venv/bin/python benchmarks/diagnose_fit.py
+Run: venv/bin/python benchmarks/diagnose_fit.py
 """
 
 from __future__ import annotations
@@ -36,7 +35,7 @@ from traj.simplify import simplify_with_indices  # noqa: E402
 
 from step0 import TOL, SEED, N_QUERIES, build_representation, full_scan_top10, recall_at_k  # noqa: E402
 
-PTS_PER_INTERVAL = 20  # точек на интервал между соседними метками времени
+PTS_PER_INTERVAL = 20  # points per interval between neighboring timestamps
 
 
 def raw_polyline_len(xy: np.ndarray) -> float:
@@ -44,7 +43,7 @@ def raw_polyline_len(xy: np.ndarray) -> float:
 
 
 def check_resampling_identity(tracks, reprs) -> None:
-    """§1: чувствительность recall к плотности дискретизации одной кривой."""
+    """§1: sensitivity of recall to the sampling density of a single curve."""
     print("=== point counts for first 5 tracks ===")
     for r in reprs[:5]:
         print(
@@ -104,7 +103,7 @@ def check_resampling_identity(tracks, reprs) -> None:
 
 
 def check_dense_error(tracks) -> tuple[list[dict], list[dict]]:
-    """§2/§3/§4: густая ошибка сплайна между метками, ошибка DP, dt-анализ."""
+    """§2/§3/§4: dense error of the spline between timestamps, DP error, dt analysis."""
     results_spline = []
     results_dp = []
 
@@ -185,7 +184,7 @@ def check_dense_error(tracks) -> tuple[list[dict], list[dict]]:
     span_dists = np.array([r["span_dist"] for r in results_spline])
     n_raws = np.array([r["n_raw"] for r in results_spline])
 
-    print("\n=== корреляции (log10 max_dist vs фактор) ===")
+    print("\n=== correlations (log10 max_dist vs factor) ===")
     log_md = np.log10(max_dists + 1e-6)
     for name, arr in [
         ("max_gap", max_gaps), ("min_dt", min_dts), ("max_dt", max_dts),
@@ -194,13 +193,13 @@ def check_dense_error(tracks) -> tuple[list[dict], list[dict]]:
     ]:
         print(f"corr(log max_dist, {name}):", np.corrcoef(log_md, arr)[0, 1])
 
-    print("\n=== dt: max и разброс внутри трека (по всем 200 трекам) ===")
+    print("\n=== dt: max and spread within a track (across all 200 tracks) ===")
     print(f"max_dt: median={np.median(max_dts):.2f}s p90={np.percentile(max_dts, 90):.2f}s max={max_dts.max():.2f}s")
     print(f"std_dt: median={np.median(std_dts):.2f}s p90={np.percentile(std_dts, 90):.2f}s max={std_dts.max():.2f}s")
     print(f"iqr_dt: median={np.median(iqr_dts):.2f}s p90={np.percentile(iqr_dts, 90):.2f}s max={iqr_dts.max():.2f}s")
 
     order = np.argsort(-max_dists)[:5]
-    print("\n=== 5 худших треков по max_dist (spline vs raw polyline) ===")
+    print("\n=== 5 worst tracks by max_dist (spline vs raw polyline) ===")
     for i in order:
         r = results_spline[i]
         print(
@@ -217,7 +216,7 @@ def check_dense_error(tracks) -> tuple[list[dict], list[dict]]:
     print(f"tracks where max_dist_dp > tol({TOL}m): {n_exceed_tol_dp}/{len(results_dp)}")
 
     order_dp = np.argsort(-max_dists_dp)[:5]
-    print("\n=== 5 худших треков по max_dist (DP) ===")
+    print("\n=== 5 worst tracks by max_dist (DP) ===")
     for i in order_dp:
         r = results_dp[i]
         print(f"{r['track_id']}: max_dist_dp={r['max_dist_dp']:.3f}m n_raw={r['n_raw']} n_dp={r['n_dp']}")
@@ -230,12 +229,12 @@ def main() -> None:
     reprs = [build_representation(tr, TOL) for tr in tracks]
 
     print("#" * 70)
-    print("# §1: spline_same vs spline_arclen — эффект плотности дискретизации")
+    print("# §1: spline_same vs spline_arclen -- effect of sampling density")
     print("#" * 70)
     check_resampling_identity(tracks, reprs)
 
     print("\n" + "#" * 70)
-    print("# §2-4: густая ошибка сплайна/DP между метками времени + dt-анализ")
+    print("# §2-4: dense error of spline/DP between timestamps + dt analysis")
     print("#" * 70)
     check_dense_error(tracks)
 

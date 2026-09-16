@@ -194,7 +194,7 @@ This roadmap outlines the development plan for **Level 1: Minimal Hilbert Vector
   - [ ] Create results visualization (matplotlib)
 
 #### Afternoon (2-3 hours)
-- [ ] **Documentation** (`docs/level1.md`)
+- [ ] **Documentation** (`docs/ru/level1.md`)
   - [ ] Architecture overview with diagrams
   - [ ] Component descriptions
   - [ ] Usage guide with examples
@@ -532,7 +532,7 @@ If Level 1 needs iteration:
     [ ] Run benchmarks
 
 [ ] 5.2 Documentation (120 min)
-    [ ] docs/level1.md (architecture, usage)
+    [ ] docs/ru/level1.md (architecture, usage)
     [ ] README.md (quick start)
     [ ] API reference
     [ ] Configuration guide

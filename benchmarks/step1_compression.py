@@ -1,12 +1,12 @@
-"""Step 1, п.5: сжатие (гипотеза A) — где исправленный сплайн может
-выигрывать у DP по байтам, при разных tol и кодировках.
+"""Step 1, item 5: compression (hypothesis A) -- where the fixed spline
+can beat DP on bytes, across different tol values and encodings.
 
-DP (пространственный, только расстояние до отрезка) vs DP+SED
-(time-aware, synchronized Euclidean distance) vs исправленный сплайн;
-байты ВКЛЮЧАЯ метки времени; tol = 2, 5, 10, 20, 50 м; float64 и int32
-(позиция в см, время в целых секундах).
+DP (spatial, distance to the segment only) vs DP+SED (time-aware,
+synchronized Euclidean distance) vs the fixed spline; bytes INCLUDING
+timestamps; tol = 2, 5, 10, 20, 50 m; float64 and int32 (position in cm,
+time in whole seconds).
 
-Запуск: venv/bin/python benchmarks/step1_compression.py
+Run: venv/bin/python benchmarks/step1_compression.py
 """
 
 from __future__ import annotations
@@ -27,15 +27,15 @@ from _report_utils import upsert_section  # noqa: E402
 
 SEED = 42
 N_TRACKS = 200
-N_SUBSET = 60  # подвыборка очищенных треков (сплайн-фиттинг на 5 tol дорог)
+N_SUBSET = 60  # subsample of cleaned tracks (spline fitting across 5 tol values is expensive)
 TOL_LIST = [2.0, 5.0, 10.0, 20.0, 50.0]
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 OUT_MD = os.path.join(RESULTS_DIR, "step1.md")
-SECTION_HEADER = "## 5. Сжатие (гипотеза A): где сплайн выигрывает у DP по байтам"
+SECTION_HEADER = "## 5. Compression (hypothesis A): where the spline beats DP on bytes"
 
 
 def _dp_bytes(n_vertices: int, encoding: str) -> int:
-    """x, y, t на вершину."""
+    """x, y, t per vertex."""
     return n_vertices * 3 * (8 if encoding == "float64" else 4)
 
 
@@ -47,7 +47,7 @@ def _spline_bytes(sp, encoding: str) -> int:
     n_knots = len(sp.tck[0])
     n_coeffs = len(sp.tck[1][0])
     itemsize = 8 if encoding == "float64" else 4
-    # + t_min, t_max -- без них узлы (доля [0,1]) нельзя перевести обратно в реальное время
+    # + t_min, t_max -- without them the knots (a fraction of [0,1]) can't be mapped back to real time
     return (n_knots + 2 * n_coeffs) * itemsize + 2 * itemsize
 
 
@@ -56,7 +56,7 @@ def main() -> None:
     rng = np.random.default_rng(SEED)
     subset_idx = rng.choice(len(all_tracks), size=min(N_SUBSET, len(all_tracks)), replace=False)
     tracks = [all_tracks[i] for i in subset_idx]
-    print(f"треков в подвыборке: {len(tracks)} (из {len(all_tracks)} очищенных)")
+    print(f"tracks in subsample: {len(tracks)} (out of {len(all_tracks)} cleaned)")
 
     rows = []
     for tol in TOL_LIST:
@@ -117,16 +117,16 @@ def main() -> None:
     lines = [
         f"{SECTION_HEADER}\n",
         (
-            f"{len(tracks)} очищенных треков (подвыборка из {len(all_tracks)}, seed={SEED}), "
-            "float64 = позиция+время float64 (24 байт/точку); int32 = позиция в "
-            "см + время в целых секундах, int32 (12 байт/точку). DP — "
-            "пространственный (perpendicular distance), DP+SED — time-aware "
-            "(synchronized Euclidean distance, см. src/traj/simplify.py). "
-            "Байты сплайна включают t_min/t_max — только так узлы (доля [0,1]) "
-            "переводятся обратно в реальное время; отдельных меток времени на "
-            "вершину сплайну не нужно.\n"
+            f"{len(tracks)} cleaned tracks (subsample out of {len(all_tracks)}, seed={SEED}), "
+            "float64 = position+time float64 (24 bytes/point); int32 = position in "
+            "cm + time in whole seconds, int32 (12 bytes/point). DP is "
+            "spatial (perpendicular distance), DP+SED is time-aware "
+            "(synchronized Euclidean distance, see src/traj/simplify.py). "
+            "Spline bytes include t_min/t_max -- only that lets the knots (a "
+            "fraction of [0,1]) be mapped back to real time; the spline "
+            "needs no separate timestamp per vertex.\n"
         ),
-        "| tol, м | raw, Б (f64/i32) | DP, Б (f64/i32) | DP+SED, Б (f64/i32) | сплайн, Б (f64/i32) | n DP / n SED / n control points |",
+        "| tol, m | raw, B (f64/i32) | DP, B (f64/i32) | DP+SED, B (f64/i32) | spline, B (f64/i32) | n DP / n SED / n control points |",
         "|---|---|---|---|---|---|",
     ]
     for row in rows:
@@ -142,17 +142,17 @@ def main() -> None:
     n_fail_total = sum(r["n_spline_fail"] for r in rows)
     best_by_tol = []
     for row in rows:
-        candidates = {"DP": row["dp_f64"], "DP+SED": row["sed_f64"], "сплайн": row["spline_f64"]}
+        candidates = {"DP": row["dp_f64"], "DP+SED": row["sed_f64"], "spline": row["spline_f64"]}
         best = min(candidates, key=candidates.get)
         best_by_tol.append(f"tol={row['tol']:.0f}: {best}")
     lines.append(
-        "Наименьший размер (float64) по tol: " + "; ".join(best_by_tol) + ".\n"
+        "Smallest size (float64) per tol: " + "; ".join(best_by_tol) + ".\n"
     )
     if n_fail_total:
         lines.append(
-            f"ВНИМАНИЕ: у {n_fail_total} (трек×tol) фиттингов густая ошибка "
-            "превысила tol (за пределами гарантии из п.2 при этих значениях "
-            "tol) — не подгонялось, см. числа выше.\n"
+            f"NOTE: for {n_fail_total} (track x tol) fits the dense error "
+            "exceeded tol (beyond the guarantee from item 2 at these tol "
+            "values) -- not forced, see the numbers above.\n"
         )
 
     body = "\n".join(lines) + "\n"

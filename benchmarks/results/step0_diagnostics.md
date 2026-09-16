@@ -1,118 +1,119 @@
-# Диагностика step0 перед step1
+# step0 diagnostics before step1
 
-Методика: те же 200 треков и `seed=42`, что и в `step0.py`, `tol = 10` м.
-Код `src/traj/*` и `benchmarks/step0.py` не менялся — диагностика
-прогонялась отдельными скриптами вне репозитория (scratch), результат
-здесь фиксируется как отчёт.
+Method: the same 200 tracks and `seed=42` as in `step0.py`, `tol = 10` m.
+The `src/traj/*` and `benchmarks/step0.py` code was not changed -- the
+diagnostics were run with separate scripts outside the repository
+(scratch), the result is recorded here as a report.
 
-## 1. Почему recall у spline_same и spline_arclen одинаковый (0.707)?
+## 1. Why is recall the same (0.707) for spline_same and spline_arclen?
 
-Не баг. Для всех 200 треков число точек в spline_same и spline_arclen
-**различается** (0 треков с одинаковым числом точек), сами массивы
-координат не идентичны (`np.allclose` = False на всех проверенных
-треках). Пример (первые 5 треков):
+Not a bug. For all 200 tracks, the number of points in spline_same and
+spline_arclen **differs** (0 tracks with the same point count), and the
+coordinate arrays themselves are not identical (`np.allclose` = False on
+every track checked). Example (first 5 tracks):
 
 | track_id | n_dp / spline_same | spline_arclen |
 |---|---|---|
 | 128/20100926013046 | 8 | 1154 |
 | 039/20090322135723 | 37 | 542 |
 | 154/20070509124902 | 31 | 322 |
-| 037/20090215234308 | 113 | 3000 (кэп) |
+| 037/20090215234308 | 113 | 3000 (cap) |
 | 128/20091230015240 | 31 | 579 |
 
-Разбивка по 30 запросам: у 25/30 запросов top-10 ID кандидатов **полностью
-совпадают** между spline_same и spline_arclen; у оставшихся 5 запросов
-top-10 отличается на 1 позицию, но per-query recall при этом либо тоже
-совпадает (75, 146, 36 — recall одинаковый при разных top-10, т.е.
-поменялась одна неверная позиция на другую неверную), либо расходится
-в противоположные стороны и гасится при усреднении (113: 0.00→0.10,
-140: 0.90→0.80). Итоговое среднее совпало до 4 знаков (0.7067 vs 0.7067)
-не потому, что признак сломан, а потому что дискретная метрика Фреше
-слабо чувствительна к плотности передискретизации одной и той же кривой
-— она определяется экстремальным (наихудшим) сопоставлением точек вдоль
-кривой, а не их числом. Добавление точек между уже имеющимися почти не
-меняет эту крайнюю пару.
+Breakdown across 30 queries: for 25/30 queries the top-10 candidate IDs
+**fully match** between spline_same and spline_arclen; for the remaining
+5 queries the top-10 differs by 1 position, but the per-query recall
+either still matches (75, 146, 36 -- same recall with different top-10,
+i.e. one wrong position swapped for another wrong one), or diverges in
+opposite directions and cancels out on averaging (113: 0.00→0.10,
+140: 0.90→0.80). The final mean matched to 4 decimal places (0.7067 vs
+0.7067) not because the feature is broken, but because the discrete
+Frechet distance is weakly sensitive to the resampling density of the
+same curve -- it is determined by the extremal (worst-case) point
+correspondence along the curve, not by the point count. Adding points
+between already-existing ones barely changes that extreme pair.
 
-**Правок в код не вносилось** — признанный баг отсутствует.
+**No code changes were made** -- there is no recognized bug here.
 
-## 2. Колебания сплайна между метками времени
+## 2. Spline oscillation between timestamps
 
-Для каждого трека: густая дискретизация сплайна (20 точек на каждый
-интервал между соседними метками времени) сравнивалась (а) по суммарной
-длине дуги с сырой ломаной, (б) по максимальному расстоянию от каждой
-густой точки сплайна до сырой ломаной **целиком** (точка-до-отрезка,
-shapely `LineString.distance`, не только в метках времени).
+For each track: a dense discretization of the spline (20 points per
+interval between neighboring timestamps) was compared (a) by total arc
+length against the raw polyline, (b) by the maximum distance from each
+dense spline point to the raw polyline **as a whole** (point-to-segment,
+shapely `LineString.distance`, not only at the timestamps).
 
-Ratio (длина дуги сплайна / длина дуги сырой ломаной):
+Ratio (spline arc length / raw polyline arc length):
 
 | median | p90 | max | min |
 |---|---|---|---|
 | 1.052 | 3.562 | 1941.98 | 0.841 |
 
-Max distance (густой сплайн → сырая ломаная), метры:
+Max distance (dense spline → raw polyline), meters:
 
 | median | p75 | p90 | p99 | max |
 |---|---|---|---|---|---|
 | 109.9 | 671.6 | 10930.7 | 186002.9 | 8 710 755.3 |
 
-Доля треков, где гарантия `ошибка <= tol` нарушается **между** метками
-времени (хотя в самих метках она выполняется):
+Fraction of tracks where the `error <= tol` guarantee is violated
+**between** timestamps (even though it holds at the timestamps themselves):
 
-| порог | треков |
+| threshold | tracks |
 |---|---|
-| > tol (10 м) | 164 / 200 (82%) |
+| > tol (10 m) | 164 / 200 (82%) |
 | > 2·tol | 141 / 200 |
 | > 5·tol | 111 / 200 |
 | > 10·tol | 101 / 200 (51%) |
 
-Даже медианный трек превышает tol между метками в **11 раз** (110 м при
-tol=10 м), т.е. это не проблема нескольких выбросов — она системная.
+Even the median track exceeds tol between timestamps by a factor of
+**11** (110 m at tol=10 m), i.e. this isn't a handful of outliers -- it's
+systemic.
 
-Корреляция log(max_dist) с потенциальными причинами (по всем 200
-трекам) слабая везде (макс. |r|=0.27 с log(n_raw)), т.е. нет одного
-доминирующего фактора — переколебание сплайна между узлами это общее
-свойство метода (степень свободы между точками ограничения не
-накладывается), которое просто сильнее проявляется на некоторых треках.
+The correlation of log(max_dist) with candidate causes (across all 200
+tracks) is weak everywhere (max |r|=0.27 with log(n_raw)), i.e. there's
+no single dominant factor -- the spline overshooting between knots is a
+general property of the method (no constraint is placed on the degree of
+freedom between points), which just shows up more strongly on some tracks.
 
-5 худших треков и вероятная причина:
+5 worst tracks and the likely cause:
 
-| track_id | max_dist, м | ratio | max_gap, м | min_dt, с | старт-финиш, м | причина |
+| track_id | max_dist, m | ratio | max_gap, m | min_dt, s | start-finish, m | cause |
 |---|---|---|---|---|---|---|
-| 062/20080114132113 | 8 710 755 | 1942 | 3817 | 3.0 | 1952 | аномальный GPS-скачок (3.8 км за 3 с ≈ 4580 км/ч) |
-| 142/20070422064810 | 1 457 997 | 88.4 | 2333 | 2.0 | 20378 | аномальный GPS-скачок (2.3 км за 2 с ≈ 4200 км/ч) |
-| 095/20101214101134 | 173 154 | 55.1 | 1197 | 2.0 | 166.6 | GPS-скачок + почти замкнутый/малоподвижный трек (старт≈финиш) |
-| 125/20080913091957 | 110 326 | 6.6 | 12056 | 2.0 | 205.1 | экстремальный одиночный GPS-скачок (12 км за 2 с) |
-| 096/20080716112753 | 50 237 | 20.4 | 141.4 | 1.0 | 3456.2 | без явного скачка — накопленное переколебание на плотных, реальных (шумных) 747 точках |
+| 062/20080114132113 | 8 710 755 | 1942 | 3817 | 3.0 | 1952 | anomalous GPS jump (3.8 km in 3 s ≈ 4580 km/h) |
+| 142/20070422064810 | 1 457 997 | 88.4 | 2333 | 2.0 | 20378 | anomalous GPS jump (2.3 km in 2 s ≈ 4200 km/h) |
+| 095/20101214101134 | 173 154 | 55.1 | 1197 | 2.0 | 166.6 | GPS jump + near-closed/low-motion track (start≈finish) |
+| 125/20080913091957 | 110 326 | 6.6 | 12056 | 2.0 | 205.1 | extreme single GPS jump (12 km in 2 s) |
+| 096/20080716112753 | 50 237 | 20.4 | 141.4 | 1.0 | 3456.2 | no clear jump -- accumulated overshoot on dense, real (noisy) 747 points |
 
-Первые четыре объясняются конкретными аномальными разрывами в сырых
-GPS-данных (реальный дефект GeoLife, тот же класс проблемы, что и трек
-из TODO.md для шага 5). Пятый — пример того, что переколебание
-случается и без единичного скачка, просто из-за того, что
-`spline.fit()` контролирует ошибку только в узлах, а не между ними.
+The first four are explained by specific anomalous breaks in the raw GPS
+data (a real GeoLife defect, the same class of problem as the track from
+TODO.md for step 5). The fifth is an example of overshoot happening even
+without a single jump, simply because `spline.fit()` only controls error
+at the knots, not between them.
 
-`fit_max_error` (ошибка ровно в метках времени) у всех пяти треков
-~8-10 м — метод честно выполняет свой контракт "ошибка <= tol в
-исходных временных метках", контракт просто не покрывает то, что
-происходит между ними.
+`fit_max_error` (error exactly at the timestamps) is ~8-10 m for all five
+tracks -- the method honestly meets its contract "error <= tol at the
+original timestamps," the contract just doesn't cover what happens
+between them.
 
-## 3. То же для DP-ломаной
+## 3. Same for the DP polyline
 
-Максимальное отклонение **любой исходной точки** трека от DP-ломаной
-(не только удалённых точек, а вообще всех):
+Maximum deviation of **any original point** of the track from the DP
+polyline (not just the removed points, but literally all of them):
 
 | median | p90 | max |
 |---|---|---|
 | 9.697 | 9.968 | 10.000 |
 
-0/200 треков превышают tol. Максимум по всем 200 трекам — ровно
-10.000 м, т.е. граница tol, что и ожидается: классический
-Дуглас-Пекер по построению гарантирует, что отклонение убранных точек
-от упрощённой ломаной не превышает порога, и гарантия держится "везде
-вдоль ломаной", а не только в вершинах.
+0/200 tracks exceed tol. The maximum across all 200 tracks is exactly
+10.000 m, i.e. the tol boundary, as expected: classic Douglas-Peucker by
+construction guarantees that the deviation of removed points from the
+simplified polyline never exceeds the threshold, and the guarantee holds
+"everywhere along the polyline," not just at the vertices.
 
-5 худших треков DP (все на самой границе tol, без превышений):
+5 worst DP tracks (all right at the tol boundary, no violations):
 
-| track_id | max_dist_dp, м | n_raw | n_dp |
+| track_id | max_dist_dp, m | n_raw | n_dp |
 |---|---|---|---|
 | 128/20070531131532 | 10.000 | 84 | 41 |
 | 169/20100604012003 | 9.999 | 1509 | 60 |
@@ -120,20 +121,21 @@ GPS-данных (реальный дефект GeoLife, тот же класс 
 | 037/20090215234308 | 9.998 | 1018 | 113 |
 | 004/20090620044101 | 9.998 | 516 | 106 |
 
-## Вывод
+## Conclusion
 
-Гарантия «ошибка <= tol» для сплайна выполняется **только в исходных
-временных метках** и массово (82% треков, медиана — 11×tol) нарушается
-между ними, вплоть до отклонений на километры на треках с GPS-скачками
-в сырых данных. У DP-ломаной та же гарантия выполняется буквально
-везде вдоль ломаной (max по 200 трекам = 10.000 м, ровно порог) — это
-прямое следствие алгоритма, а не совпадение. Это полностью объясняет
-низкий recall@10 сплайна (0.707 против 0.997 у DP из step0.md):
-дискретная Фреше между сплайн-представлениями искажается этими
-непроконтролированными выбросами между узлами, тогда как DP-ломаная
-структурно не может отклониться от исходного трека больше чем на tol
-нигде. Recall spline_same и spline_arclen совпал не из-за бага, а
-потому что Фреше нечувствительна к плотности передискретизации одной и
-той же (уже искажённой) кривой. Для step1 имеет смысл либо
-контролировать ошибку сплайна вдоль всей кривой (не только в узлах),
-либо явно резать треки по GPS-скачкам перед фиттингом.
+The "error <= tol" guarantee for the spline holds **only at the original
+timestamps** and is massively violated (82% of tracks, median 11×tol)
+between them, up to kilometer-scale deviations on tracks with GPS jumps
+in the raw data. For the DP polyline, the same guarantee holds literally
+everywhere along the polyline (max across 200 tracks = 10.000 m, exactly
+the threshold) -- this is a direct consequence of the algorithm, not a
+coincidence. This fully explains the spline's low recall@10 (0.707 vs
+0.997 for DP from step0.md): the discrete Frechet distance between
+spline representations is distorted by these uncontrolled excursions
+between knots, whereas the DP polyline structurally cannot deviate from
+the source track by more than tol anywhere. spline_same and
+spline_arclen recall matched not because of a bug, but because Frechet
+distance is insensitive to the resampling density of the same (already
+distorted) curve. For step1 it makes sense to either control the
+spline's error along the whole curve (not just at the knots), or
+explicitly split tracks at GPS jumps before fitting.

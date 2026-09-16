@@ -3,7 +3,7 @@
 import pytest
 import numpy as np
 
-pytest.importorskip("sentence_transformers", reason="legacy level1 dep не установлен в venv")
+pytest.importorskip("sentence_transformers", reason="legacy level1 dep not installed in venv")
 
 from level1.embedder import TextEmbedder
 

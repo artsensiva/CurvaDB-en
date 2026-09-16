@@ -1,27 +1,26 @@
-"""Step 2, п.1-2: где отношение шум/tol переворачивает сжатие в пользу
-сплайна на ГЛАДКИХ (дорожно-подобных) синтетических траекториях.
+"""Step 2, items 1-2: where the noise/tol ratio flips compression in the
+spline's favor on SMOOTH (road-like) synthetic trajectories.
 
-Синтетика: прямые + дуги окружности, соединённые клотоидами (спираль
-Эйлера, замкнутая форма через интегралы Френеля) — кривизна и курс
-непрерывны на всех стыках, в отличие от step1_kinematics.py (там
-повороты — дуги без клотоидных переходов). Скорость постоянна на весь
-трек (геометрия сжатия изучается отдельно от кинематики — она уже
-разобрана в step1 §4).
+Synthetic data: straights + circular arcs joined by clothoids (Euler
+spiral, closed form via Fresnel integrals) -- curvature and heading are
+continuous at every joint, unlike step1_kinematics.py (there, turns are
+arcs with no clothoid transitions). Speed is constant over the whole
+track (compression geometry is studied separately from kinematics -- that
+was already covered in step1 §4).
 
-Честное сравнение: целевой tol из сетки — это допуск на ошибку
-ОТНОСИТЕЛЬНО ИСТИННОЙ (бесшумной) кривой на густой сетке, а не
-параметр, передаваемый методам напрямую. У каждого метода (DP,
-DP+SED, сплайн-time, сплайн-chord) свой внутренний параметр
-(порог на ЗАШУМЛЁННЫХ точках); для каждой клетки (sigma, tol, метод,
-трек) перебором внутреннего параметра ищется МИНИМАЛЬНОЕ число
-параметров представления, при котором честная ошибка <= целевого tol.
-Недостижимые клетки (даже самая генерозная точка перебора не проходит
-tol — типично при sigma >= tol) помечаются явно, без траты времени на
-дальнейший перебор.
+Honest comparison: the target tol from the grid is the error tolerance
+AGAINST THE TRUE (noise-free) curve on a dense grid, not a parameter
+passed to the methods directly. Each method (DP, DP+SED, spline-time,
+spline-chord) has its own internal parameter (a threshold on the NOISY
+points); for each cell (sigma, tol, method, track) the internal parameter
+is swept to find the MINIMAL number of representation parameters at which
+the honest error is <= the target tol. Unreachable cells (even the most
+generous sweep point fails tol -- typically when sigma >= tol) are
+flagged explicitly, without wasting time on further sweeping.
 
-Запуск:
-    venv/bin/python benchmarks/step2_crossover.py --pilot   # бюджетная проверка (5 треков, малая сетка)
-    venv/bin/python benchmarks/step2_crossover.py           # полный прогон, пишет results/step2.md
+Run:
+    venv/bin/python benchmarks/step2_crossover.py --pilot   # budget check (5 tracks, small grid)
+    venv/bin/python benchmarks/step2_crossover.py           # full run, writes results/step2.md
 """
 
 from __future__ import annotations
@@ -51,13 +50,14 @@ SIGMA_LIST = [0.0, 0.02, 0.1, 0.5, 2.0, 5.0]
 TOL_LIST = [0.05, 0.2, 1.0, 5.0, 20.0]
 LENGTH_RANGE_M = (1000.0, 5000.0)
 SPEED_RANGE_MPS = (8.0, 20.0)
-PTS_PER_SEC = 10  # густая сетка для честной ошибки: >= 10 точек/с
-N_INTERNAL_GRID = 8  # точек перебора внутреннего параметра метода на клетку
-# Пониженная точность fit() ТОЛЬКО для перебора сетки (не влияет на honest
-# error -- она считается независимо на густой сетке против истинной кривой,
-# см. true_curve_error); полные max_iter/max_densify_rounds были на два
-# порядка медленнее без заметного изменения n_control_points или true_error
-# (проверено вручную на нескольких клетках).
+PTS_PER_SEC = 10  # dense grid for the honest error: >= 10 points/s
+N_INTERNAL_GRID = 8  # sweep points for a method's internal parameter, per cell
+# Reduced fit() precision ONLY for the grid sweep (doesn't affect the
+# honest error -- that's computed independently on a dense grid against
+# the ground-truth curve, see true_curve_error); full max_iter/
+# max_densify_rounds were two orders of magnitude slower with no
+# noticeable change in n_control_points or true_error (checked manually
+# on several cells).
 SPLINE_SEARCH_MAX_ITER = 15
 SPLINE_SEARCH_MAX_DENSIFY_ROUNDS = 3
 
@@ -68,8 +68,8 @@ LENGTH_RANGE_PILOT_M = (900.0, 1100.0)
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 OUT_MD = os.path.join(RESULTS_DIR, "step2.md")
-SECTION1_HEADER = "## 1. Синтетика, метрика ошибки, честный подбор параметра"
-SECTION2_HEADER = "## 2. Сжатие: карта отношения сплайн/DP+SED по (шум, tol)"
+SECTION1_HEADER = "## 1. Synthetic data, error metric, honest parameter selection"
+SECTION2_HEADER = "## 2. Compression: spline/DP+SED ratio map by (noise, tol)"
 
 
 # ------------------------------------------------------------- geometry --
@@ -83,8 +83,8 @@ class Segment:
 
 
 def _clothoid_xy(s, x0, y0, theta0, k0, a):
-    """Позиция вдоль клотоиды (curvature(u) = k0 + a*u) на длине дуги s
-    (может быть массивом), замкнутая форма через интегралы Френеля."""
+    """Position along the clothoid (curvature(u) = k0 + a*u) at arc length
+    s (can be an array), closed form via Fresnel integrals."""
     s = np.asarray(s, dtype=float)
     if abs(a) < 1e-12:
         return x0 + np.cos(theta0) * s, y0 + np.sin(theta0) * s
@@ -129,9 +129,9 @@ def _segment_end_state(seg: Segment, x0: float, y0: float, theta0: float):
 
 
 def _random_road_segments(rng: np.random.Generator, target_length_m: float) -> list[Segment]:
-    """Прямые (50-400м) чередуются с поворотами: клотоида-вход (0->k),
-    дуга постоянной кривизны, клотоида-выход (k->0). Кривизна и курс
-    непрерывны на всех стыках по построению."""
+    """Straights (50-400m) alternate with turns: entry clothoid (0->k),
+    constant-curvature arc, exit clothoid (k->0). Curvature and heading
+    are continuous at every joint by construction."""
     segments: list[Segment] = []
     total = 0.0
     while total < target_length_m:
@@ -188,12 +188,12 @@ def make_synthetic_track(
     length_range_m: tuple[float, float] = LENGTH_RANGE_M,
     speed_range_mps: tuple[float, float] = SPEED_RANGE_MPS,
 ):
-    """Возвращает (шумный трек с шагом 1с, true_xy(t) -- векторизованная
-    функция истинной (бесшумной) кривой, duration). Геометрия и скорость
-    зависят только от `seed` (не от `noise_std`) -- одна и та же форма
-    пути используется на всех уровнях шума; шум использует отдельный
-    rng, производный от (seed, noise_std), чтобы не коррелировать между
-    разными sigma одного трека."""
+    """Returns (noisy track with a 1s step, true_xy(t) -- a vectorized
+    function of the true (noise-free) curve, duration). Geometry and speed
+    depend only on `seed` (not on `noise_std`) -- the same path shape is
+    used at every noise level; noise uses a separate rng derived from
+    (seed, noise_std), so it doesn't correlate across different sigma
+    values of the same track."""
     geom_rng = np.random.default_rng(seed)
     target_length = float(geom_rng.uniform(*length_range_m))
     segments = _random_road_segments(geom_rng, target_length)
@@ -278,10 +278,10 @@ def _build_spline(track, internal_tol, t_dense, true_xy_dense, mode):
 
 
 def search_min_params(build_fn, target_tol: float, internal_tol_grid: np.ndarray) -> dict:
-    """internal_tol_grid -- по ВОЗРАСТАНИЮ (от самого генерозного/малого
-    internal_tol к самому скупому/большому). Первая точка -- проверка
-    достижимости (лучший случай метода); если она не проходит tol,
-    остальные точки сетки не считаются."""
+    """internal_tol_grid -- in INCREASING order (from the most generous/
+    smallest internal_tol to the stingiest/largest). The first point is a
+    reachability check (the method's best case); if it fails tol, the
+    rest of the grid isn't evaluated."""
     best = None
     for i, itol in enumerate(internal_tol_grid):
         n, nbytes, err = build_fn(float(itol))
@@ -335,7 +335,7 @@ def run_grid(n_tracks, sigma_list, tol_list, length_range_m, seed=SEED, verbose=
                 for m in METHODS:
                     cells[(sigma, tol)][m].append(res[m])
         if verbose:
-            print(f"трек seed={gseed} готов")
+            print(f"track seed={gseed} done")
     return cells
 
 
@@ -344,62 +344,63 @@ def _summarize_method(entries: list[dict]) -> str:
     n_total = len(entries)
     n_reach = len(reachable)
     if n_reach == 0:
-        return "недостижимо"
+        return "unreachable"
     mean_bytes = np.mean([e["bytes"] for e in reachable])
     mean_n = np.mean([e["n"] for e in reachable])
     if n_reach == n_total:
-        return f"{mean_bytes:.0f}Б (n={mean_n:.1f})"
-    return f"{mean_bytes:.0f}Б (n={mean_n:.1f}), {n_reach}/{n_total} достижимо"
+        return f"{mean_bytes:.0f}B (n={mean_n:.1f})"
+    return f"{mean_bytes:.0f}B (n={mean_n:.1f}), {n_reach}/{n_total} reachable"
 
 
 def format_section1() -> str:
     lines = [
         f"{SECTION1_HEADER}\n",
         (
-            "Синтетика: дорожная модель из прямых (50-400м) и поворотов "
-            "(радиус 30-150м, угол 30-150°), каждый поворот -- клотоида-вход "
-            "(кривизна 0->k, спираль Эйлера через интегралы Френеля), дуга "
-            "постоянной кривизны, клотоида-выход (k->0) -- курс и кривизна "
-            f"непрерывны на всех стыках. Длина трека {LENGTH_RANGE_M[0]/1000:.0f}-"
-            f"{LENGTH_RANGE_M[1]/1000:.0f} км, скорость постоянна на трек "
-            f"({SPEED_RANGE_MPS[0]:.0f}-{SPEED_RANGE_MPS[1]:.0f} м/с), шаг "
-            "наблюдений 1с, seed=42.\n"
+            "Synthetic data: a road model made of straights (50-400m) and "
+            "turns (radius 30-150m, angle 30-150°), each turn -- entry "
+            "clothoid (curvature 0->k, Euler spiral via Fresnel integrals), "
+            "constant-curvature arc, exit clothoid (k->0) -- heading and "
+            f"curvature are continuous at every joint. Track length {LENGTH_RANGE_M[0]/1000:.0f}-"
+            f"{LENGTH_RANGE_M[1]/1000:.0f} km, speed constant per track "
+            f"({SPEED_RANGE_MPS[0]:.0f}-{SPEED_RANGE_MPS[1]:.0f} m/s), observation "
+            "step 1s, seed=42.\n"
         ),
         (
-            "Ошибка ВСЕХ методов -- max отклонение реконструкции от ИСТИННОЙ "
-            "(бесшумной) кривой на густой сетке (>=10 точек/с). DP/DP+SED "
-            "реконструируются кусочно-линейно ПО ВРЕМЕНИ между сохранёнными "
-            "вершинами; сплайн (time) -- прямая связь u=(t-t_min)/(t_max-t_min); "
-            "сплайн (chord) -- точной связи t<->u нет, используется линейная "
-            "интерполяция по узлам шумного трека (приближение, см. код).\n"
+            "Error for ALL methods -- max deviation of the reconstruction from "
+            "the TRUE (noise-free) curve on a dense grid (>=10 points/s). "
+            "DP/DP+SED are reconstructed piecewise-linearly IN TIME between "
+            "the retained vertices; the spline (time) uses a direct "
+            "relationship u=(t-t_min)/(t_max-t_min); the spline (chord) has "
+            "no exact t<->u relationship, so linear interpolation over the "
+            "noisy track's knots is used (an approximation, see the code).\n"
         ),
         (
-            "Честный подбор: целевой tol НЕ передаётся методам напрямую. Для "
-            "каждого метода отдельно перебирается его собственный внутренний "
-            f"параметр (на зашумлённых точках) по {N_INTERNAL_GRID} "
-            "логарифмически распределённым значениям относительно целевого "
-            "tol; отчитывается минимальное число параметров среди прошедших "
-            "честную проверку (ошибка <= tol). Если даже самая генерозная "
-            "точка перебора не проходит tol (типично sigma >= tol) -- клетка "
-            "помечается недостижимой без дальнейшего перебора.\n"
+            "Honest parameter selection: the target tol is NOT passed to the "
+            "methods directly. For each method, its own internal parameter "
+            f"(on the noisy points) is swept over {N_INTERNAL_GRID} "
+            "log-spaced values relative to the target tol; the minimal "
+            "number of parameters among those passing the honest check "
+            "(error <= tol) is reported. If even the most generous sweep "
+            "point fails tol (typically sigma >= tol), the cell is flagged "
+            "unreachable without further sweeping.\n"
         ),
     ]
     return "\n".join(lines) + "\n"
 
 
 def _pair_summary(sed_entries: list[dict], spl_entries: list[dict], n_tracks: int):
-    """Сравнивает DP+SED и сплайн ПОПАРНО, по одним и тем же трекам --
-    честно различает три исхода: оба достижимы (ratio по общему
-    подмножеству), достижим только один метод (это тоже "победа" --
-    другой метод не может держать tol НИ ПРИ КАКОМ числе параметров), и
-    недостижимо оба. Возвращает (текст_клетки, ratio_или_None,
-    "spline_only"|"sed_only"|"both"|"neither")."""
+    """Compares DP+SED and the spline PAIRWISE, on the same tracks --
+    honestly distinguishes three outcomes: both reachable (ratio over the
+    shared reachable subset), only one method reachable (that's also a
+    "win" -- the other method cannot hold tol at ANY number of
+    parameters), and both unreachable. Returns (cell_text,
+    ratio_or_None, "spline_only"|"sed_only"|"both"|"neither")."""
     both = [(s, p) for s, p in zip(sed_entries, spl_entries) if s["reachable"] and p["reachable"]]
     spline_only = [p for s, p in zip(sed_entries, spl_entries) if p["reachable"] and not s["reachable"]]
     sed_only = [s for s, p in zip(sed_entries, spl_entries) if s["reachable"] and not p["reachable"]]
 
     if not both and not spline_only and not sed_only:
-        return "недостижимо (оба)", None, "neither"
+        return "unreachable (both)", None, "neither"
 
     parts = []
     ratio = None
@@ -412,24 +413,24 @@ def _pair_summary(sed_entries: list[dict], spl_entries: list[dict], n_tracks: in
         parts.append(f"**{ratio:.2f}x**{suffix}")
     if spline_only:
         kind = "spline_only" if not both else kind
-        parts.append(f"сплайн-только: {len(spline_only)}/{n_tracks} (DP+SED недостижим ни при каком n)")
+        parts.append(f"spline-only: {len(spline_only)}/{n_tracks} (DP+SED unreachable at any n)")
     if sed_only:
         kind = "sed_only" if not both and not spline_only else kind
-        parts.append(f"DP+SED-только: {len(sed_only)}/{n_tracks} (сплайн недостижим ни при каком n)")
+        parts.append(f"DP+SED-only: {len(sed_only)}/{n_tracks} (spline unreachable at any n)")
     return "; ".join(parts), ratio, kind
 
 
 def format_section2(cells, sigma_list, tol_list, n_tracks) -> str:
-    lines = [f"{SECTION2_HEADER}\n", f"{n_tracks} треков, seed={SEED}.\n"]
+    lines = [f"{SECTION2_HEADER}\n", f"{n_tracks} tracks, seed={SEED}.\n"]
     header = "| sigma \\ tol | " + " | ".join(f"{t:g}" for t in tol_list) + " |"
 
     for method_key, title in (
         ("dp", "DP"),
         ("dp_sed", "DP+SED"),
-        ("spline_time", "сплайн (time)"),
-        ("spline_chord", "сплайн (chord) -- нижняя граница, без учёта восстановления времени"),
+        ("spline_time", "spline (time)"),
+        ("spline_chord", "spline (chord) -- lower bound, ignoring time reconstruction"),
     ):
-        lines.append(f"### {title}: байты (n параметров), доля достижимых треков")
+        lines.append(f"### {title}: bytes (n parameters), fraction of reachable tracks")
         lines.append(header)
         lines.append("|" + "---|" * (len(tol_list) + 1))
         for sigma in sigma_list:
@@ -438,10 +439,10 @@ def format_section2(cells, sigma_list, tol_list, n_tracks) -> str:
         lines.append("")
 
     lines.append(
-        "### Сравнение попарно по трекам: сплайн (time) vs DP+SED "
-        "(отношение байт по общему подмножеству достижимых треков; "
-        "\"только один метод\" -- другой метод не укладывается в tol "
-        "НИ ПРИ КАКОМ числе параметров на этой клетке)"
+        "### Pairwise comparison by track: spline (time) vs DP+SED "
+        "(byte ratio over the shared subset of reachable tracks; "
+        "\"only one method\" means the other method cannot hit tol at "
+        "ANY number of parameters in this cell)"
     )
     lines.append(header)
     lines.append("|" + "---|" * (len(tol_list) + 1))
@@ -466,27 +467,27 @@ def format_section2(cells, sigma_list, tol_list, n_tracks) -> str:
             or (ratio_map.get((sigma, tol)) is not None and ratio_map[(sigma, tol)] < 1.0)
         ]
         if wins:
-            crossovers.append(f"sigma={sigma:g}: сплайн выигрывает (или единственный достижим) при tol>={min(wins):g}")
+            crossovers.append(f"sigma={sigma:g}: spline wins (or is the only one reachable) at tol>={min(wins):g}")
     if crossovers:
-        lines.append("Точка(и) пересечения: " + "; ".join(crossovers) + ".\n")
+        lines.append("Crossover point(s): " + "; ".join(crossovers) + ".\n")
     else:
         lines.append(
-            "Пересечения в этой сетке НЕТ: на всех клетках, где сравнение "
-            "возможно, DP+SED компактнее сплайна или оба недостижимы "
-            "(отрицательный результат, не подгонялось).\n"
+            "NO crossover in this grid: in every cell where the comparison "
+            "is possible, DP+SED is more compact than the spline or both "
+            "are unreachable (a negative result, not forced).\n"
         )
     return "\n".join(lines) + "\n"
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pilot", action="store_true", help="бюджетный прогон (5 треков, малая сетка), без записи в .md")
-    parser.add_argument("--n-tracks", type=int, default=None, help="переопределить N_TRACKS полного прогона")
+    parser.add_argument("--pilot", action="store_true", help="budget run (5 tracks, small grid), doesn't write to .md")
+    parser.add_argument("--n-tracks", type=int, default=None, help="override N_TRACKS for the full run")
     args = parser.parse_args()
 
     if args.pilot:
         print(
-            f"ПИЛОТ: {N_TRACKS_PILOT} треков, длина ~1км, "
+            f"PILOT: {N_TRACKS_PILOT} tracks, length ~1km, "
             f"sigma={SIGMA_PILOT}, tol={TOL_PILOT}"
         )
         t0 = time.time()
@@ -495,29 +496,29 @@ def main():
         n_cells_pilot = N_TRACKS_PILOT * len(SIGMA_PILOT) * len(TOL_PILOT)
         n_cells_full = N_TRACKS * len(SIGMA_LIST) * len(TOL_LIST)
         extrapolated = elapsed * (n_cells_full / n_cells_pilot)
-        print(f"\nпилот занял {elapsed:.1f}с ({n_cells_pilot} (трек x sigma x tol) комбинаций)")
+        print(f"\npilot took {elapsed:.1f}s ({n_cells_pilot} (track x sigma x tol) combinations)")
         print(
-            f"экстраполяция на полную сетку ({n_cells_full} комбинаций, x"
-            f"{n_cells_full / n_cells_pilot:.1f}): ~{extrapolated:.0f}с (~{extrapolated / 60:.1f} мин)"
+            f"extrapolated to the full grid ({n_cells_full} combinations, x"
+            f"{n_cells_full / n_cells_pilot:.1f}): ~{extrapolated:.0f}s (~{extrapolated / 60:.1f} min)"
         )
         print(format_section2(cells, SIGMA_PILOT, TOL_PILOT, N_TRACKS_PILOT))
         return
 
     n_tracks = args.n_tracks if args.n_tracks is not None else N_TRACKS
-    print(f"ПОЛНЫЙ ПРОГОН: {n_tracks} треков, sigma={SIGMA_LIST}, tol={TOL_LIST}")
+    print(f"FULL RUN: {n_tracks} tracks, sigma={SIGMA_LIST}, tol={TOL_LIST}")
     t0 = time.time()
     cells = run_grid(n_tracks, SIGMA_LIST, TOL_LIST, LENGTH_RANGE_M)
     elapsed = time.time() - t0
-    print(f"\nполный прогон занял {elapsed:.1f}с ({elapsed/60:.1f} мин)")
+    print(f"\nfull run took {elapsed:.1f}s ({elapsed/60:.1f} min)")
 
     body1 = format_section1()
     body2 = format_section2(cells, SIGMA_LIST, TOL_LIST, n_tracks)
     if n_tracks != N_TRACKS:
         body2 += (
-            f"\n**Ограничение бюджета времени:** N_TRACKS уменьшен с {N_TRACKS} до "
-            f"{n_tracks} по результатам пилотного прогона (см. вывод `--pilot`), "
-            "чтобы полный прогон укладывался в разумное время. Полный прогон занял "
-            f"{elapsed:.1f}с ({elapsed/60:.1f} мин) на {n_tracks} треках.\n"
+            f"\n**Time budget constraint:** N_TRACKS was reduced from {N_TRACKS} to "
+            f"{n_tracks} based on the pilot run's output (see `--pilot` output), "
+            "so the full run fits a reasonable time budget. The full run took "
+            f"{elapsed:.1f}s ({elapsed/60:.1f} min) on {n_tracks} tracks.\n"
         )
     upsert_section(OUT_MD, SECTION1_HEADER, body1)
     upsert_section(OUT_MD, SECTION2_HEADER, body2)

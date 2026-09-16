@@ -1,4 +1,4 @@
-"""Тесты фиттинга сплайна: ошибка аппроксимации <= tol."""
+"""Spline fitting tests: approximation error <= tol."""
 
 import numpy as np
 

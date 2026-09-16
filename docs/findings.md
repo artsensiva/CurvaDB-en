@@ -1,294 +1,296 @@
-# Итоги исследования: сплайн против DP-ломаной для GPS-траекторий
+# Research findings: spline vs DP polyline for GPS trajectories
 
-См. также: [полная хронология проекта](history.md) (включая
-до-репозиторный этап) и [следующие шаги](next_steps.md) (резолюция,
-план интервью, порог возврата к коду).
+See also: [the full project timeline](history.md) (including the
+pre-repository stage) and [next steps](next_steps.md) (resolution,
+interview plan, threshold to return to code).
 
-## Вопрос
+## Question
 
-Даёт ли хранение GPS-траекторий кубическими B-сплайнами выигрыш над
-классической схемой "упрощение Дугласом-Пекером (DP) + поиск по
-дискретной метрике Фреше" — по байтам на трек, по recall поиска
-ближайших соседей и по точности восстановления кинематики (скорость,
-ускорение)?
+Does storing GPS trajectories as cubic B-splines beat the classic
+"Douglas-Peucker (DP) simplification + search by discrete Frechet
+distance" scheme -- on bytes per track, nearest-neighbor search recall,
+and kinematics reconstruction accuracy (velocity, acceleration)?
 
-Короткий ответ: нет, по сжатию — в проверенных условиях выигрыша нет
-(см. "Ключевые цифры" и "Вывод" ниже; проверка ограничена равномерными
-узлами у оракула — см. оговорку там же). По кинематике — не хуже DP, с
-одним конкретным преимуществом (не даёт катастрофических выбросов
-ускорения).
+Short answer: no, on compression -- under the conditions tested there's
+no advantage (see "Key numbers" and "Conclusion" below; the test is
+limited to uniform knots for the oracle -- see the caveat there). On
+kinematics -- no worse than DP, with one specific advantage (no
+catastrophic acceleration outliers).
 
-## Хронология
+## Timeline
 
-### step0 — первый (сломанный) замер
+### step0 -- the first (broken) measurement
 
-Наивное сравнение сырой ломаной, DP-ломаной и кубического сплайна
-(`scipy.interpolate.splprep`, контроль ошибки только в исходных
-временных метках) на 200 треках GeoLife, `tol=10`м. Результат выглядел
-разгромным для сплайна: recall@10 относительно точного Фреше — DP
-0.997, сплайн 0.707 (`benchmarks/results/step0.md`).
+A naive comparison of the raw polyline, the DP polyline, and a cubic
+spline (`scipy.interpolate.splprep`, error controlled only at the
+original timestamps) on 200 GeoLife tracks, `tol=10`m. The result looked
+crushing for the spline: recall@10 against the exact Frechet distance --
+DP 0.997, spline 0.707 (`benchmarks/results/step0.md`).
 
-Диагностика (`step0_diagnostics.md`) показала: это не свойство метода,
-а методическая ошибка. `fit()` держал гарантию `ошибка <= tol` только
-**в исходных временных метках** — между ними сплайн мог уходить
-сколь угодно далеко. У 82% из 200 треков (медиана — 11×tol) ошибка
-между метками превышала tol, у нескольких — до километров, из-за
-аномальных GPS-скачков в сырых данных GeoLife. У DP-ломаной та же
-гарантия по построению выполняется вдоль ВСЕЙ ломаной (максимум по 200
-трекам — ровно 10.000м, граница tol). Разница в recall объяснялась
-именно этим, а не числом точек в сплайн-представлении (recall
-`spline_same` и `spline_arclen` совпал не из-за общего бага, а потому
-что дискретная Фреше не чувствительна к плотности передискретизации
-одной и той же уже искажённой кривой).
+Diagnostics (`step0_diagnostics.md`) showed: this isn't a property of
+the method, but a methodological error. `fit()` only held the `error <=
+tol` guarantee **at the original timestamps** -- between them, the
+spline could drift arbitrarily far. For 82% of the 200 tracks (median
+11×tol), the error between timestamps exceeded tol, and for several,
+by kilometers, due to anomalous GPS jumps in the raw GeoLife data. The
+DP polyline, by construction, holds the same guarantee along the ENTIRE
+polyline (the maximum across 200 tracks -- exactly 10.000m, the tol
+boundary). The recall difference was explained by exactly this, not by
+the point count in the spline representation (`spline_same` and
+`spline_arclen` recall matched not because of a shared bug, but because
+the discrete Frechet distance is insensitive to the resampling density
+of the same, already-distorted curve).
 
-### step1 — честная методика
+### step1 -- an honest methodology
 
-Две правки: `src/traj/clean.py` режет треки по GPS-разрывам (dt > 30с
-или скорость > 70 м/с) до фиттинга, устраняя причину скачков, а не
-следствие; `fit()` дополнен густой проверкой ошибки МЕЖДУ метками
-времени (не только в них), с адаптивным добавлением synthetic-узлов
-при нарушении. Порог приёмки (>= 99% треков с честной ошибкой <= tol)
-достигнут с запасом — 100% (585/585 очищенных треков).
+Two fixes: `src/traj/clean.py` splits tracks at GPS breaks (dt > 30s or
+speed > 70 m/s) before fitting, removing the cause of the jumps rather
+than the symptom; `fit()` is augmented with a dense error check BETWEEN
+timestamps (not just at them), with adaptive synthetic-knot insertion
+when violated. The acceptance threshold (>= 99% of tracks with an honest
+error <= tol) was reached with margin -- 100% (585/585 cleaned tracks).
 
-После этого recall@10 сплайна почти сравнялся с DP: **0.707 → 0.972**
-(DP: 0.997 → 0.996) — разрыв, объяснённый в step0_diagnostics.md,
-практически закрылся (`step1.md` §3, §6).
+After this, the spline's recall@10 nearly matched DP: **0.707 → 0.972**
+(DP: 0.997 → 0.996) -- the gap explained in step0_diagnostics.md
+essentially closed (`step1.md` §3, §6).
 
-Но по сжатию (гипотеза A) DP выигрывает на КАЖДОМ проверенном tol
-(2..50м): например при tol=10м — DP 366 байт/трек, сплайн 1346
-байт/трек, в 3.7 раза больше (`step1.md` §5) — потому что честный
-густой контроль ошибки заставляет сплайн держать намного больше
-контрольных точек, чем DP-вершин для той же гарантии. Отрицательный
-результат, не подгонялся.
+But on compression (hypothesis A), DP wins at EVERY tol tested (2..50m):
+e.g. at tol=10m -- DP 366 bytes/track, spline 1346 bytes/track, 3.7x more
+(`step1.md` §5) -- because honest dense error control forces the spline
+to keep far more control points than DP has vertices for the same
+guarantee. A negative result, not forced.
 
-По кинематике (гипотеза B) — смешанный результат: на синтетике с
-известными v/a сплайн и DP+PCHIP дают близкую медианную ошибку, но у
-DP+PCHIP тяжёлый хвост по ускорению (максимум ~4991 м/с² против ~34 у
-сплайна) — численная хрупкость PCHIP на близко расположенных по
-времени DP-вершинах, которой у сплайна нет. Третий ориентир, Калман
-(constant-acceleration + RTS-сглаживание), точнее обоих в среднем, но
-заметно хуже по recall детекции резких манёвров (0.068 против 0.284 у
-сплайна и 0.338 у DP+PCHIP) — CA-модель переглаживает повороты
-(`step1.md` §4).
+On kinematics (hypothesis B) -- a mixed result: on synthetic data with
+known v/a, the spline and DP+PCHIP give similar median error, but
+DP+PCHIP has a heavy tail on acceleration (max ~4991 m/s² vs ~34 for the
+spline) -- PCHIP's numerical fragility on DP vertices close together in
+time, which the spline doesn't share. A third reference point, Kalman
+(constant-acceleration + RTS smoothing), is more accurate than both on
+average, but noticeably worse on recall for detecting sharp maneuvers
+(0.068 vs 0.284 for the spline and 0.338 for DP+PCHIP) -- the CA model
+oversmooths turns (`step1.md` §4).
 
-### step2 — поиск ниши для сплайна
+### step2 -- searching for a niche for the spline
 
-Гипотеза: возможно, есть зона (отношение шум/tol), где сплайн всё же
-компактнее DP+SED (time-aware DP). Синтетика — гладкая дорожная
-геометрия (прямые + клотоидные повороты), честный подбор внутреннего
-параметра каждого метода по логарифмической сетке относительно
-целевого tol.
+Hypothesis: maybe there's a zone (noise/tol ratio) where the spline is
+still more compact than DP+SED (time-aware DP). Synthetic data -- smooth
+road geometry (straights + clothoid turns), honest selection of each
+method's internal parameter via a log grid relative to the target tol.
 
-Нашлась узкая и немонотонная зона выигрыша: при tol=1-5м и sigma<=0.1м
-сплайн компактнее DP+SED на 15-25% (0.78-0.85x, на 24-30 из 30 треков),
-но на грубом tol=20м DP+SED снова выигрывает при ЛЮБОМ уровне шума,
-включая sigma=0 (1.08-2.35x) (`step2.md` §2, §4). Проверка (§3)
-показала, что это не артефакт неоптимальности FITPACK — `splprep`
-компактнее наивных равномерных узлов на всех проверенных треках.
+A narrow, non-monotone winning zone was found: at tol=1-5m and
+sigma<=0.1m the spline is 15-25% more compact than DP+SED (0.78-0.85x,
+on 24-30 of 30 tracks), but at a coarse tol=20m, DP+SED wins again at
+ANY noise level, including sigma=0 (1.08-2.35x) (`step2.md` §2, §4). A
+check (§3) showed this isn't a FITPACK suboptimality artifact --
+`splprep` is more compact than naive uniform knots on every track
+tested.
 
-Практическая применимость этой зоны: обычный смартфонный/автомобильный
-GPS (шум ~3-10м) в зону НЕ попадает — точность GPS уже сравнима с самим
-tol. В зону попадают RTK/дифференциальный GPS (точность ~0.02-0.1м) при
-tol 1-5м; инерциальные/лидарные системы (~0.05-0.3м) — пограничный
-случай, ближе к tol~5м (`step2.md` §4).
+Practical applicability of this zone: ordinary smartphone/automotive GPS
+(noise ~3-10m) does NOT fall into the zone -- GPS accuracy is already
+comparable to tol itself. RTK/differential GPS (accuracy ~0.02-0.1m)
+falls into the zone at tol 1-5m; inertial/lidar systems (~0.05-0.3m) are
+a borderline case, closer to tol~5m (`step2.md` §4).
 
-### step3 — решающий эксперимент (и его провал)
+### step3 -- the decisive experiment (and its failure)
 
-Причина проигрыша сплайна на грубом tol была заподозрена в самом
-контракте `fit()`: он всегда держится у ломаной шумных точек
-(синтетические узлы, интерполяция при s=0) — значит наследует ошибку
-хорды и не может сглаживать шум так же свободно, как настоящий
-МНК-сплайн. step3 проверил это напрямую: `src/traj/spline_lsq.py` —
-`make_lsq_spline` по x(t), y(t) БЕЗ привязки к ломаной, с равномерными
-и адаптивными (по остаткам) узлами, плюс **оракул** — тот же фиттер,
-посаженный напрямую на истинную (бесшумную) кривую, независимый от
-шума и разреженности наблюдений (но, как выяснилось при подготовке
-step5, использующий только равномерные узлы — см. оговорку в "Выводе"
-ниже; это потолок для равномерных узлов, а не для сплайна вообще).
+The cause of the spline's loss at coarse tol was suspected to be
+`fit()`'s own contract: it always stays tethered to the polyline of
+noisy points (synthetic knots, interpolation at s=0) -- meaning it
+inherits the chord error and cannot smooth noise as freely as a genuine
+least-squares spline. step3 tested this directly:
+`src/traj/spline_lsq.py` -- `make_lsq_spline` on x(t), y(t) WITHOUT
+tethering to the polyline, with uniform and adaptive (residual-driven)
+knots, plus an **oracle** -- the same fitter, fit directly to the true
+(noise-free) curve, independent of noise and observation sparsity (but,
+as discovered while preparing step5, using only uniform knots -- see the
+caveat in "Conclusion" below; this is a ceiling for uniform knots, not
+for the spline in general).
 
-Синтетика step2 дополнена переменной скоростью (разгон/торможение/
-остановки) и разными шагами наблюдений (dt = 1, 5, 15с). Три критерия
-были зафиксированы ДО запуска (`docs/prompts/step3.md`):
+step2's synthetic data was extended with variable speed (acceleration/
+braking/stops) and different observation steps (dt = 1, 5, 15s). Three
+criteria were fixed BEFORE the run (`docs/prompts/step3.md`):
 
-- **K1** (сжатие): сплайн после квантования+zlib >= 30% меньше DP+SED
-  хотя бы в двух клетках с sigma/tol <= 0.1 при обоюдной достижимости
-  >= 80%.
-- **K2** (реконструкция при dt >= 5с): есть клетки, где сплайн
-  достижим >= 80% треков, а DP+SED <= 20%.
-- **K3** (реконструкция при шуме): при sigma=5 есть tol, где сплайн
-  достижим >= 80%, а DP+SED <= 20%.
+- **K1** (compression): after quantization+zlib, the spline is >= 30%
+  smaller than DP+SED in at least two cells with sigma/tol <= 0.1, at
+  >= 80% mutual reachability.
+- **K2** (reconstruction at dt >= 5s): there are cells where the spline
+  is >= 80% reachable and DP+SED is <= 20%.
+- **K3** (reconstruction under noise): at sigma=5, there is a tol where
+  the spline is >= 80% reachable and DP+SED is <= 20%.
 
-**Все три критерия не выполнены** на 15 треках (`step3.md` §3):
+**All three criteria failed** on 15 tracks (`step3.md` §3):
 
-- K1: максимум наблюдавшегося сжатия сплайна — 6% (dt=1с, sigma=0,
-  tol=2м: 438Б против 467Б у DP+SED, 0.94x), а не требуемые 30%.
-- K2: DP+SED действительно почти везде недостижим при dt>=5с (0-13%
-  треков), но сплайн ни в одной клетке не превысил 53% реализуемости
-  (требовалось >= 80%).
-- K3: при sigma=5 DP+SED почти всегда недостижим, но сплайн тоже не
-  достиг 80% ни при одном tol (максимум 47%).
+- K1: the best observed spline compression was 6% (dt=1s, sigma=0,
+  tol=2m: 438B vs 467B for DP+SED, 0.94x), not the required 30%.
+- K2: DP+SED is indeed almost always unreachable at dt>=5s (0-13% of
+  tracks), but the spline never exceeded 53% reachability in any cell
+  (>= 80% was required).
+- K3: at sigma=5, DP+SED is almost always unreachable, but the spline
+  also never reached 80% at any tol (maximum 47%).
 
-Самое важное: **даже оракул НЕ компактнее DP+SED**. При tol=10м оракул
-— 292 байта, DP+SED — 278 байт; при tol=2м оракул — 457 байт, DP+SED —
-467 байт (`step3.md` §2, оракульская таблица и таблица DP+SED при
-dt=1с, sigma=0). Сплайн, посаженный напрямую на точную бесшумную
-кривую, без единой капли шума или разреженности выборки — с
-РАВНОМЕРНЫМИ узлами — не даёт выигрыша по байтам над упрощённой
-ломаной. Это НЕ проверка для оптимальной/адаптивной расстановки узлов
-(см. "Вывод" ниже) — вопрос остаётся открытым как гипотеза H1.
+Most importantly: **even the oracle is NOT more compact than DP+SED**.
+At tol=10m, the oracle is 292 bytes, DP+SED is 278 bytes; at tol=2m, the
+oracle is 457 bytes, DP+SED is 467 bytes (`step3.md` §2, the oracle
+table and the DP+SED table at dt=1s, sigma=0). A spline fit directly to
+the exact, noise-free curve, with not a drop of noise or sampling
+sparsity -- with UNIFORM knots -- gives no byte advantage over the
+simplified polyline. This is NOT a test of optimal/adaptive knot
+placement (see "Conclusion" below) -- the question remains open as
+hypothesis H1.
 
-## Ключевые цифры (сводка)
+## Key numbers (summary)
 
-| Метрика | step0 (сломано) | step1 (честно) | step2 (ниша) | step3 (решающий) |
+| Metric | step0 (broken) | step1 (honest) | step2 (niche) | step3 (decisive) |
 |---|---|---|---|---|
-| Recall@10 сплайн / DP | 0.707 / 0.997 | 0.972 / 0.996 | — | — |
-| Сжатие при типичном tol | сплайн 3052Б / DP 833Б (tol=10м, старый фиттинг) | сплайн 1346Б / DP 366Б (tol=10м, 3.7x) | 0.78-0.85x (узкая зона, tol=1-5м, sigma<=0.1м) | лучшее наблюдавшееся 0.94x (6% меньше); оракул 292Б / DP+SED 278Б (tol=10м) |
+| Recall@10 spline / DP | 0.707 / 0.997 | 0.972 / 0.996 | -- | -- |
+| Compression at a typical tol | spline 3052B / DP 833B (tol=10m, old fitter) | spline 1346B / DP 366B (tol=10m, 3.7x) | 0.78-0.85x (narrow zone, tol=1-5m, sigma<=0.1m) | best observed 0.94x (6% smaller); oracle 292B / DP+SED 278B (tol=10m) |
 
-## Вывод
+## Conclusion
 
-Гипотеза сжатия (кубический B-сплайн компактнее DP-упрощённой ломаной
-при равной честной ошибке до истины) на потребительском GPS —
-**закрыта** (step1, step3). Оракул (сплайн, посаженный напрямую на
-бесшумную плотную истинную кривую — никакого шума, никакой
-разреженности выборки, никаких artefacts фиттера) тоже не даёт
-выигрыша по байтам над DP+SED, значит дело не в шуме и не в
-разреженности наблюдений.
+The compression hypothesis (a cubic B-spline is more compact than a
+DP-simplified polyline at the same honest error against the ground
+truth) on consumer GPS is **closed** (step1, step3). The oracle (a
+spline fit directly to the dense, noise-free true curve -- no noise, no
+sampling sparsity, no fitter artifacts) also gives no byte advantage
+over DP+SED, so the issue isn't noise or observation sparsity.
 
-**Важная оговорка** (проверено чтением `src/traj/spline_lsq.py`):
-`fit_oracle()` использует ТОЛЬКО равномерные узлы (`_build_uniform`, не
-`_build_adaptive`) — это потолок для равномерных узлов, а не
-теоретический предел представимости сплайном вообще. В step2 (`step2.md`
-§3) адаптивные узлы FITPACK (`splprep`) дали ~0.70x контрольных точек
-против наивных равномерных на проверенных треках — оптимальная
-расстановка узлов могла бы заметно сократить число параметров и
-приблизить критерий K1 (30% сжатия). Это не проверялось. Поэтому
-корректная формулировка: **в проверенных условиях (равномерные узлы у
-оракула) выигрыша по сжатию нет; оптимальная расстановка узлов на
-точных данных не проверена** — см. гипотезу H1 ниже. При этом даже
-гипотетические ~30% экономии байт не были бы сами по себе продуктовой
-ценностью: GPS-трек и так занимает единицы килобайт, такая экономия не
-является узким местом ни в одной из рассмотренных областей применения.
+**Important caveat** (verified by reading `src/traj/spline_lsq.py`):
+`fit_oracle()` uses ONLY uniform knots (`_build_uniform`, not
+`_build_adaptive`) -- this is a ceiling for uniform knots, not the
+theoretical limit of spline representability in general. In step2
+(`step2.md` §3), FITPACK's adaptive knots (`splprep`) gave ~0.70x the
+control points of naive uniform knots on the tracks tested -- optimal
+knot placement could meaningfully reduce the parameter count and bring
+it closer to criterion K1 (30% compression). This was not tested. So the
+correct phrasing is: **under the conditions tested (uniform knots for
+the oracle), there is no compression advantage; optimal knot placement
+on exact data is untested** -- see hypothesis H1 below. Also, even a
+hypothetical ~30% byte savings would not by itself be product value: a
+GPS track already takes up a few kilobytes, and savings of that order
+aren't a bottleneck in any of the use cases considered.
 
-Узкая зона выигрыша, найденная в step2 (§4, tol=1-5м, sigma<=0.1м),
-была основана на старом `fit()`, привязанном к ломаной шумных точек —
-**этот вывод step2.md §4 отменяется результатами step3** (с учётом
-оговорки выше про равномерные узлы оракула).
+The narrow winning zone found in step2 (§4, tol=1-5m, sigma<=0.1m) was
+based on the old `fit()`, tethered to the polyline of noisy points --
+**this conclusion from step2.md §4 is overturned by step3's results**
+(subject to the caveat above about the oracle's uniform knots).
 
-## Ограничения (и почему они не меняют вывод по сжатию)
+## Limitations (and why they don't change the compression conclusion)
 
-- **Синтетика, не реальные GPS-данные** (step2, step3) — но step1
-  показал тот же отрицательный результат на 585 реальных очищенных
-  треках GeoLife (`step1.md` §5), так что вывод не держится только на
-  синтетике.
-- **15 треков в step3** — небольшая выборка для клеточных долей
-  реализуемости (80%/20% — грубые пороги при n=15). Но это относится к
-  критериям K2/K3 (реконструкция), а не к оракульскому сравнению по
-  байтам (K1/итоговый вывод по сжатию), которое не зависит от долей
-  достижимости.
-- **dt=15с неинформативен**: при этом шаге наблюдений ВСЕ методы
-  (DP+SED и оба варианта LSQ-сплайна) недостижимы на 100% клеток сетки
-  — вероятная причина: резкие повороты (радиус 30-150м) при переменной
-  скорости на части из 15 треков целиком укладываются в один интервал
-  между соседними 15-секундными отсчётами, так что никакой метод,
-  видящий только эти отсчёты, не может восстановить поворот. Это
-  артефакт слишком редкой выборки относительно геометрии, а не сигнал
-  в пользу какого-либо метода — на вывод не влияет.
-- **sigma=5 при tol=10 (K3)** — жёсткое отношение шум/tol (шум
-  сопоставим с допуском), пограничный тестовый режим.
-- **DP+SED — простой конкурент**, не map-matching и не Калман-фильтр
-  (Калман показал лучшую среднюю точность кинематики в step1, но здесь
-  не тестировался как метод сжатия/реконструкции).
-- **`spline_lsq.py` без регуляризации** — `make_lsq_spline` (в отличие
-  от `spline.fit()`/FITPACK) не имеет встроенного сглаживающего
-  параметра `s`; при росте числа узлов к почти-интерполяции возможна
-  численная неустойчивость (учтено отслеживанием лучшего результата по
-  ходу роста, см. `src/traj/spline_lsq.py`).
+- **Synthetic data, not real GPS data** (step2, step3) -- but step1
+  showed the same negative result on 585 real, cleaned GeoLife tracks
+  (`step1.md` §5), so the conclusion doesn't rest on synthetic data
+  alone.
+- **15 tracks in step3** -- a small sample for cell-level reachability
+  fractions (80%/20% are coarse thresholds at n=15). But this applies to
+  criteria K2/K3 (reconstruction), not to the oracle's byte comparison
+  (K1/the overall compression conclusion), which doesn't depend on
+  reachability fractions.
+- **dt=15s is uninformative**: at this observation step, ALL methods
+  (DP+SED and both LSQ spline variants) are unreachable in 100% of grid
+  cells -- the likely cause: sharp turns (radius 30-150m) at variable
+  speed, on some of the 15 tracks, fit entirely within one interval
+  between neighboring 15-second samples, so no method that only sees
+  those samples can recover the turn. This is an artifact of sampling
+  too sparsely relative to the geometry, not a signal in favor of any
+  method -- it doesn't affect the conclusion.
+- **sigma=5 at tol=10 (K3)** -- a harsh noise/tol ratio (the noise is
+  comparable to the tolerance), a borderline test regime.
+- **DP+SED is a simple competitor**, not map-matching or a Kalman
+  filter (Kalman showed the best average kinematic accuracy in step1,
+  but wasn't tested here as a compression/reconstruction method).
+- **`spline_lsq.py` has no regularization** -- `make_lsq_spline` (unlike
+  `spline.fit()`/FITPACK) has no built-in smoothing parameter `s`; as
+  the number of knots grows toward near-interpolation, numerical
+  instability is possible (handled by tracking the best result seen
+  during growth, see `src/traj/spline_lsq.py`).
 
-Ни одно из этих ограничений (кроме одного) не относится к **оракулу**:
-он фитится напрямую на точную бесшумную плотную кривую, вопросы шума,
-разреженности наблюдений и робастности фиттера к нему неприменимы. Но
-сам оракул использует ТОЛЬКО равномерные узлы (см. оговорку в разделе
-"Вывод" выше) — это его собственное ограничение, не унаследованное от
-списка выше. С этой оговоркой: в проверенных условиях (равномерные
-узлы) выигрыша по сжатию нет; устойчивость вывода к оптимальной
-расстановке узлов не проверялась — это и есть гипотеза H1 ниже.
+None of these limitations except one apply to the **oracle**: it's fit
+directly to the exact, noise-free, dense curve, so questions of noise,
+observation sparsity, and the fitter's robustness to them don't apply.
+But the oracle itself uses ONLY uniform knots (see the caveat in
+"Conclusion" above) -- that's its own limitation, not inherited from the
+list above. With that caveat: under the conditions tested (uniform
+knots), there is no compression advantage; the conclusion's robustness
+to optimal knot placement was not tested -- that's exactly hypothesis H1
+below.
 
-## Открытые гипотезы (не проверялось)
+## Open hypotheses (untested)
 
-Раньше здесь была одна расплывчатая "открытая гипотеза" про kappa(t).
-После проверки кода `fit_oracle()` (см. "Вывод" выше) она распадается
-на два разных вопроса — исследовательский (закрыть гипотезу сжатия
-до конца) и продуктовый (найти применение, где H1 неважна) — их стоит
-разделять явно.
+There used to be one vague "open hypothesis" here about kappa(t). After
+checking `fit_oracle()`'s code (see "Conclusion" above), it splits into
+two distinct questions -- a research one (fully closing the compression
+hypothesis) and a product one (finding a use case where H1 doesn't
+matter) -- worth separating explicitly.
 
-### H1 (сжатие): свободные/оптимальные узлы на точных данных
+### H1 (compression): free/optimal knots on exact data
 
-Адаптивная расстановка узлов по профилю кривизны истинной кривой
-kappa(t) — а не по остаткам шумного пробного фита, как в step3
-`fit_adaptive`, и не равномерно, как в `fit_oracle` — могла бы (в
-принципе) дать более компактное представление на ТОЧНЫХ (безшумных)
-данных, размещая узлы там, где геометрия действительно сложнее. Идея не
-реализована и не проверена. Не приоритетна: см. резолюцию в
-[docs/next_steps.md](next_steps.md) — даже если H1 подтвердится,
-экономия порядка 30% байт не является продуктовой ценностью сама по
-себе.
+Adaptive knot placement driven by the true curve's curvature profile
+kappa(t) -- rather than by the residuals of a noisy trial fit, as in
+step3's `fit_adaptive`, and not uniform, as in `fit_oracle` -- could (in
+principle) give a more compact representation on EXACT (noise-free)
+data, placing knots where the geometry is genuinely more complex. Not
+implemented or tested. Not a priority: see the resolution in
+[docs/next_steps.md](next_steps.md) -- even if H1 is confirmed, a ~30%
+byte savings is not product value by itself.
 
-### H2 (продукт): аналитические производные и поиск по kappa(t) на точных данных
+### H2 (product): analytical derivatives and search by kappa(t) on exact data
 
-Для источников с точным позиционированием (RTK, роботы, дроны,
-хирургическая робототехника) сплайн даёт аналитические производные
-(скорость, ускорение, кривизна) "бесплатно", в отличие от ломаной. Это
-может быть ценно НЕЗАВИСИМО от того, выигрывает ли сплайн по сжатию —
-если реальная задача заказчика не "храните компактнее", а "ищите
-похожие манёвры/участки по форме или кинематике". Не проверено, спрос
-не подтверждён — проверяется интервью, не кодом (см.
+For sources with precise positioning (RTK, robots, drones, surgical
+robotics), the spline gives analytical derivatives (velocity,
+acceleration, curvature) "for free," unlike a polyline. This could be
+valuable INDEPENDENTLY of whether the spline wins on compression -- if
+the customer's real problem isn't "store more compactly" but "search for
+similar maneuvers/segments by shape or kinematics." Untested, demand
+unconfirmed -- to be checked via interviews, not code (see
 [docs/next_steps.md](next_steps.md)).
 
-## Не исследовалось
+## Not investigated
 
-- **step2, причина проигрыша сплайна на грубом tol=20м**: на всех
-  проверенных уровнях шума (включая sigma=0) DP+SED компактнее сплайна
-  при tol=20м — и это не объясняется неоптимальностью FITPACK (§3
-  step2.md показал, что `splprep` компактнее наивных равномерных узлов).
-  Кандидат-причина: честная densify-стратегия старого `fit()` наращивает
-  контрольные точки ради густой проверки МЕЖДУ 1-секундными отсчётами
-  независимо от формы поворота — не проверялось глубже (стало
-  неактуальным после step3, где вопрос сжатия решён отдельно, на
-  фиттере без этой densify-стратегии).
-- **step3, разрыв оракул vs `fit_uniform`/`fit_adaptive`**: оракул
-  достижим 15/15 на всех tol, а реальные фиттеры (видящие только
-  шумные/редкие отсчёты) — 0-53% в клетках с dt>=5с или sigma=5.
-  Ожидаемо (оракул не видит шум/разреженность), но величина разрыва не
-  разложена на вклад шума отдельно от вклада разреженности выборки.
-- **step3, dt=15с — 100% недостижимость у всех методов**: см. раздел
-  "Ограничения" выше — правдоподобная причина (резкий поворот целиком
-  внутри одного интервала между отсчётами) не проверена по каждому из
-  15 треков отдельно и не отделена от возможного вклада разрешения
-  лог-скана внутреннего параметра (8 точек, не непрерывный перебор).
+- **step2, the cause of the spline's loss at coarse tol=20m**: at every
+  noise level tested (including sigma=0), DP+SED is more compact than
+  the spline at tol=20m -- and this isn't explained by FITPACK
+  suboptimality (step2.md §3 showed `splprep` is more compact than
+  naive uniform knots). Candidate cause: the old `fit()`'s honest
+  densify strategy grows control points for the dense check BETWEEN
+  1-second samples regardless of the turn's shape -- not investigated
+  further (became moot after step3, where the compression question is
+  settled separately, on a fitter without this densify strategy).
+- **step3, the gap between the oracle and `fit_uniform`/`fit_adaptive`**:
+  the oracle is reachable 15/15 at every tol, while the real fitters
+  (which only see noisy/sparse samples) reach 0-53% in cells with
+  dt>=5s or sigma=5. Expected (the oracle doesn't see noise/sparsity),
+  but the size of the gap wasn't decomposed into noise's contribution
+  separately from sampling sparsity's.
+- **step3, dt=15s -- 100% unreachability for every method**: see
+  "Limitations" above -- the plausible cause (a sharp turn entirely
+  within one interval between samples) wasn't checked per track
+  individually among the 15, and wasn't separated from a possible
+  contribution from the internal-parameter log-scan's resolution (8
+  points, not a continuous sweep).
 
-## Переиспользуемое
+## Reusable
 
-- **`src/traj/clean.py`** — резка GPS-треков по разрывам времени/
-  скорости и bbox-фильтрация; общеприменимо к любой задаче с сырыми
-  GPS-логами GeoLife-подобного формата.
-- **`src/traj/frechet.py`** — точная дискретная метрика Фреше
-  (Eiter-Mannila) на Numba с ранним выходом по порогу; независима от
-  выбора представления траектории (ломаная, сплайн — что угодно,
-  сводящееся к полилинии точек).
-- **`simplify_sed_with_indices` (`src/traj/simplify.py`)** —
-  time-aware (SED) вариант Дугласа-Пекера; строже пространственного DP
-  при том же tol, учитывает неравномерность выборки во времени.
-- **Методика**:
-  - оракул (фит на истинных, а не наблюдаемых данных) как потолок
-    метода — отделяет ограничения репрезентации от ограничений
-    конкретной реализации фиттера, но нужно явно проверять, что сам
-    оракул настроен на максимум возможностей метода (в step3 он
-    использовал только равномерные узлы — см. "Вывод" выше), иначе
-    "потолок" окажется заниженным;
-  - критерии успеха фиксируются ДО запуска эксперимента (K1-K3 в
-    `docs/prompts/step3.md`), не подгоняются постфактум;
-  - честная ошибка мерится ДО ИСТИНЫ на густой сетке, а не до
-    наблюдаемых (потенциально зашумлённых/разреженных) точек — иначе
-    метод может выглядеть точным, просто хорошо описывая свой же шум
-    (см. step0_diagnostics.md и открытие в step3 о немонотонности
-    ошибки от внутреннего параметра фиттера).
+- **`src/traj/clean.py`** -- splits GPS tracks at time/speed breaks and
+  applies bbox filtering; broadly applicable to any task with raw
+  GeoLife-like GPS logs.
+- **`src/traj/frechet.py`** -- the exact discrete Frechet distance
+  (Eiter-Mannila) on Numba with early exit at a threshold; independent
+  of the trajectory representation chosen (polyline, spline -- anything
+  reducible to a polyline of points).
+- **`simplify_sed_with_indices` (`src/traj/simplify.py`)** -- a
+  time-aware (SED) variant of Douglas-Peucker; stricter than spatial DP
+  at the same tol, accounts for uneven sampling in time.
+- **Methodology**:
+  - an oracle (a fit on the true, not observed, data) as a method's
+    ceiling -- separates the representation's limitations from the
+    specific fitter implementation's limitations, but requires
+    explicitly checking that the oracle itself is tuned to the method's
+    full potential (in step3 it used only uniform knots -- see
+    "Conclusion" above), otherwise the "ceiling" turns out understated;
+  - success criteria are fixed BEFORE the experiment runs (K1-K3 in
+    `docs/prompts/step3.md`), not adjusted after the fact;
+  - the honest error is measured AGAINST THE GROUND TRUTH on a dense
+    grid, not against the observed (potentially noisy/sparse) points --
+    otherwise a method can look accurate simply by describing its own
+    noise well (see step0_diagnostics.md and the step3 discovery of
+    non-monotone error vs. the fitter's internal parameter).

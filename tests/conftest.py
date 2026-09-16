@@ -1,5 +1,5 @@
-"""Пакет не установлен (даже editable) — добавляем src/ в sys.path один
-раз для всех тестов, вместо дублирования sys.path.insert в каждом файле."""
+"""Package isn't installed (not even editable) -- add src/ to sys.path
+once for all tests, instead of duplicating sys.path.insert in every file."""
 
 import os
 import sys

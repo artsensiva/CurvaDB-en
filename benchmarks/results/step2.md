@@ -1,10 +1,10 @@
-# Step 2: crossover сплайна и DP+SED по отношению шум/tol
+# Step 2: crossover of the spline and DP+SED by noise/tol ratio
 
-## 3. Неоптимальность FITPACK: splprep vs минимальные равномерные узлы
+## 3. FITPACK suboptimality: splprep vs minimal uniform knots
 
-5 треков из синтетики step2_crossover.py (те же первые 5 seed из мастер-seed=42), sigma=0.1м, tol=1м, параметризация временем. `splprep` -- через `traj.spline.fit` (честный густой контроль, адаптивная densify + рост `s`). `make_lsq_spline` -- РАВНОМЕРНЫЕ узлы, число внутренних узлов растится с 0 до первого прохождения той же честной густой проверки (`traj.spline.dense_max_error`).
+5 tracks from step2_crossover.py's synthetic data (the same first 5 seeds from master-seed=42), sigma=0.1m, tol=1m, time parametrization. `splprep` -- via `traj.spline.fit` (honest dense control, adaptive densify + growing `s`). `make_lsq_spline` -- UNIFORM knots, the number of interior knots grown from 0 until it first passes the same honest dense check (`traj.spline.dense_max_error`).
 
-| seed | n точек | n control points (splprep) | n control points (lsq, равномерные) | отношение |
+| seed | n points | n control points (splprep) | n control points (lsq, uniform) | ratio |
 |---|---|---|---|---|
 | 89250 | 191 | 41 | 58 | 0.71x |
 | 773956 | 118 | 29 | 32 | 0.91x |
@@ -12,115 +12,116 @@
 | 438878 | 273 | 76 | 104 | 0.73x |
 | 433015 | 428 | 83 | 137 | 0.61x |
 
-В среднем по 5/5 трекам: splprep 54.8 контрольных точек, минимальные равномерные узлы -- 78.8 (0.70x). splprep не хуже равномерных узлов на этих треках -- проигрыш сплайна DP+SED не объясняется неоптимальностью FITPACK.
+On average across 5/5 tracks: splprep uses 54.8 control points, minimal uniform knots -- 78.8 (0.70x). splprep is no worse than uniform knots on these tracks -- the spline's loss to DP+SED is not explained by FITPACK suboptimality.
 
-## 1. Синтетика, метрика ошибки, честный подбор параметра
+## 1. Synthetic data, error metric, honest parameter selection
 
-Синтетика: дорожная модель из прямых (50-400м) и поворотов (радиус 30-150м, угол 30-150°), каждый поворот -- клотоида-вход (кривизна 0->k, спираль Эйлера через интегралы Френеля), дуга постоянной кривизны, клотоида-выход (k->0) -- курс и кривизна непрерывны на всех стыках. Длина трека 1-5 км, скорость постоянна на трек (8-20 м/с), шаг наблюдений 1с, seed=42.
+Synthetic data: a road model made of straights (50-400m) and turns (radius 30-150m, angle 30-150°), each turn -- entry clothoid (curvature 0->k, Euler spiral via Fresnel integrals), constant-curvature arc, exit clothoid (k->0) -- heading and curvature are continuous at every joint. Track length 1-5 km, speed constant per track (8-20 m/s), observation step 1s, seed=42.
 
-Ошибка ВСЕХ методов -- max отклонение реконструкции от ИСТИННОЙ (бесшумной) кривой на густой сетке (>=10 точек/с). DP/DP+SED реконструируются кусочно-линейно ПО ВРЕМЕНИ между сохранёнными вершинами; сплайн (time) -- прямая связь u=(t-t_min)/(t_max-t_min); сплайн (chord) -- точной связи t<->u нет, используется линейная интерполяция по узлам шумного трека (приближение, см. код).
+Error for ALL methods -- max deviation of the reconstruction from the TRUE (noise-free) curve on a dense grid (>=10 points/s). DP/DP+SED are reconstructed piecewise-linearly IN TIME between the retained vertices; the spline (time) uses a direct relationship u=(t-t_min)/(t_max-t_min); the spline (chord) has no exact t<->u relationship, so linear interpolation over the noisy track's knots is used (an approximation, see the code).
 
-Честный подбор: целевой tol НЕ передаётся методам напрямую. Для каждого метода отдельно перебирается его собственный внутренний параметр (на зашумлённых точках) по 8 логарифмически распределённым значениям относительно целевого tol; отчитывается минимальное число параметров среди прошедших честную проверку (ошибка <= tol). Если даже самая генерозная точка перебора не проходит tol (типично sigma >= tol) -- клетка помечается недостижимой без дальнейшего перебора.
+Honest parameter selection: the target tol is NOT passed to the methods directly. For each method, its own internal parameter (on the noisy points) is swept over 8 log-spaced values relative to the target tol; the minimal number of parameters among those passing the honest check (error <= tol) is reported. If even the most generous sweep point fails tol (typically sigma >= tol), the cell is flagged unreachable without further sweeping.
 
-Примечание к точности: сетка перебора внутреннего параметра -- 8 логарифмически распределённых точек (не непрерывная бисекция), поэтому отчитываемое "минимальное число параметров" -- оценка сверху с разрешением этой сетки, не точный минимум. Для сплайна поиск использует пониженные `max_iter`/`max_densify_rounds` (быстрее на два порядка, честная ошибка при выборочной проверке не менялась, см. код) -- сделано ради бюджета времени (см. ниже).
+Precision note: the internal-parameter sweep grid has 8 log-spaced points (not continuous bisection), so the reported "minimal number of parameters" is an upper-bound estimate at this grid's resolution, not the exact minimum. For the spline, the search uses reduced `max_iter`/`max_densify_rounds` (two orders of magnitude faster, the honest error didn't change on spot checks, see the code) -- done for the time budget (see below).
 
-## 2. Сжатие: карта отношения сплайн/DP+SED по (шум, tol)
+## 2. Compression: spline/DP+SED ratio map by (noise, tol)
 
-30 треков, seed=42.
+30 tracks, seed=42.
 
-**Бюджет времени:** пилот (5 треков, ~1км, sigma=[0, 0.1, 2], tol=[0.2, 1, 5], 45 комбинаций) занял 22с -- в пределах 3-минутного лимита, полный прогон запущен без уменьшения N_TRACKS. Сам полный прогон (30 треков, 1-5км, 30 клеток) занял 1215с (20.3 мин) -- дольше линейной экстраполяции пилота (~440с), т.к. в полной сетке треки длиннее (1-5км против ~1км в пилоте, значит больше точек на трек и дороже фиттинг сплайна на клетку).
+**Time budget:** the pilot (5 tracks, ~1km, sigma=[0, 0.1, 2], tol=[0.2, 1, 5], 45 combinations) took 22s -- within the 3-minute budget, so the full run was launched without reducing N_TRACKS. The full run itself (30 tracks, 1-5km, 30 cells) took 1215s (20.3 min) -- longer than the pilot's linear extrapolation (~440s), because tracks in the full grid are longer (1-5km vs ~1km in the pilot, meaning more points per track and a more expensive spline fit per cell).
 
-### DP: байты (n параметров), доля достижимых треков
+### DP: bytes (n parameters), fraction of reachable tracks
 | sigma \ tol | 0.05 | 0.2 | 1 | 5 | 20 |
 |---|---|---|---|---|---|
-| 0 | недостижимо | 2296Б (n=95.7), 3/30 достижимо | 2097Б (n=87.4), 25/30 достижимо | 1074Б (n=44.7) | 582Б (n=24.3) |
-| 0.02 | недостижимо | 2336Б (n=97.3), 3/30 достижимо | 2094Б (n=87.2), 25/30 достижимо | 1071Б (n=44.6) | 583Б (n=24.3) |
-| 0.1 | недостижимо | недостижимо | 2084Б (n=86.8), 24/30 достижимо | 1067Б (n=44.5) | 585Б (n=24.4) |
-| 0.5 | недостижимо | недостижимо | недостижимо | 1082Б (n=45.1) | 587Б (n=24.5) |
-| 2 | недостижимо | недостижимо | недостижимо | 912Б (n=38.0), 1/30 достижимо | 604Б (n=25.2) |
-| 5 | недостижимо | недостижимо | недостижимо | недостижимо | 892Б (n=37.2), 26/30 достижимо |
+| 0 | unreachable | 2296B (n=95.7), 3/30 reachable | 2097B (n=87.4), 25/30 reachable | 1074B (n=44.7) | 582B (n=24.3) |
+| 0.02 | unreachable | 2336B (n=97.3), 3/30 reachable | 2094B (n=87.2), 25/30 reachable | 1071B (n=44.6) | 583B (n=24.3) |
+| 0.1 | unreachable | unreachable | 2084B (n=86.8), 24/30 reachable | 1067B (n=44.5) | 585B (n=24.4) |
+| 0.5 | unreachable | unreachable | unreachable | 1082B (n=45.1) | 587B (n=24.5) |
+| 2 | unreachable | unreachable | unreachable | 912B (n=38.0), 1/30 reachable | 604B (n=25.2) |
+| 5 | unreachable | unreachable | unreachable | unreachable | 892B (n=37.2), 26/30 reachable |
 
-### DP+SED: байты (n параметров), доля достижимых треков
+### DP+SED: bytes (n parameters), fraction of reachable tracks
 | sigma \ tol | 0.05 | 0.2 | 1 | 5 | 20 |
 |---|---|---|---|---|---|
-| 0 | недостижимо | 2288Б (n=95.3), 3/30 достижимо | 2102Б (n=87.6), 25/30 достижимо | 1070Б (n=44.6) | 561Б (n=23.4) |
-| 0.02 | недостижимо | 2336Б (n=97.3), 3/30 достижимо | 2098Б (n=87.4), 25/30 достижимо | 1070Б (n=44.6) | 563Б (n=23.5) |
-| 0.1 | недостижимо | недостижимо | 2100Б (n=87.5), 24/30 достижимо | 1062Б (n=44.2) | 557Б (n=23.2) |
-| 0.5 | недостижимо | недостижимо | недостижимо | 1106Б (n=46.1) | 578Б (n=24.1) |
-| 2 | недостижимо | недостижимо | недостижимо | 1272Б (n=53.0), 1/30 достижимо | 590Б (n=24.6) |
-| 5 | недостижимо | недостижимо | недостижимо | недостижимо | 1390Б (n=57.9), 26/30 достижимо |
+| 0 | unreachable | 2288B (n=95.3), 3/30 reachable | 2102B (n=87.6), 25/30 reachable | 1070B (n=44.6) | 561B (n=23.4) |
+| 0.02 | unreachable | 2336B (n=97.3), 3/30 reachable | 2098B (n=87.4), 25/30 reachable | 1070B (n=44.6) | 563B (n=23.5) |
+| 0.1 | unreachable | unreachable | 2100B (n=87.5), 24/30 reachable | 1062B (n=44.2) | 557B (n=23.2) |
+| 0.5 | unreachable | unreachable | unreachable | 1106B (n=46.1) | 578B (n=24.1) |
+| 2 | unreachable | unreachable | unreachable | 1272B (n=53.0), 1/30 reachable | 590B (n=24.6) |
+| 5 | unreachable | unreachable | unreachable | unreachable | 1390B (n=57.9), 26/30 reachable |
 
-### сплайн (time): байты (n параметров), доля достижимых треков
+### spline (time): bytes (n parameters), fraction of reachable tracks
 | sigma \ tol | 0.05 | 0.2 | 1 | 5 | 20 |
 |---|---|---|---|---|---|
-| 0 | недостижимо | 2600Б (n=323.0), 3/30 достижимо | 1639Б (n=202.8), 25/30 достижимо | 904Б (n=111.0) | 606Б (n=73.8) |
-| 0.02 | недостижимо | 4816Б (n=600.0), 3/30 достижимо | 1756Б (n=217.5), 25/30 достижимо | 904Б (n=111.0) | 606Б (n=73.8) |
-| 0.1 | недостижимо | недостижимо | 2182Б (n=270.8), 24/30 достижимо | 906Б (n=111.2) | 610Б (n=74.3) |
-| 0.5 | недостижимо | недостижимо | недостижимо | 1695Б (n=209.9) | 1358Б (n=167.7) |
-| 2 | недостижимо | недостижимо | недостижимо | 360Б (n=43.0), 1/30 достижимо | 1142Б (n=140.8) |
-| 5 | недостижимо | недостижимо | недостижимо | недостижимо | 1616Б (n=200.0), 26/30 достижимо |
+| 0 | unreachable | 2600B (n=323.0), 3/30 reachable | 1639B (n=202.8), 25/30 reachable | 904B (n=111.0) | 606B (n=73.8) |
+| 0.02 | unreachable | 4816B (n=600.0), 3/30 reachable | 1756B (n=217.5), 25/30 reachable | 904B (n=111.0) | 606B (n=73.8) |
+| 0.1 | unreachable | unreachable | 2182B (n=270.8), 24/30 reachable | 906B (n=111.2) | 610B (n=74.3) |
+| 0.5 | unreachable | unreachable | unreachable | 1695B (n=209.9) | 1358B (n=167.7) |
+| 2 | unreachable | unreachable | unreachable | 360B (n=43.0), 1/30 reachable | 1142B (n=140.8) |
+| 5 | unreachable | unreachable | unreachable | unreachable | 1616B (n=200.0), 26/30 reachable |
 
-### сплайн (chord) -- нижняя граница, без учёта восстановления времени: байты (n параметров), доля достижимых треков
+### spline (chord) -- lower bound, ignoring time reconstruction: bytes (n parameters), fraction of reachable tracks
 | sigma \ tol | 0.05 | 0.2 | 1 | 5 | 20 |
 |---|---|---|---|---|---|
-| 0 | недостижимо | 2584Б (n=323.0), 3/30 достижимо | 1618Б (n=202.2), 25/30 достижимо | 886Б (n=110.7) | 600Б (n=75.0) |
-| 0.02 | недостижимо | 4648Б (n=581.0), 3/30 достижимо | 1710Б (n=213.8), 25/30 достижимо | 886Б (n=110.8) | 600Б (n=75.0) |
-| 0.1 | недостижимо | недостижимо | 1843Б (n=230.4), 24/30 достижимо | 888Б (n=111.0) | 598Б (n=74.7) |
-| 0.5 | недостижимо | недостижимо | недостижимо | 1207Б (n=150.9) | 878Б (n=109.7) |
-| 2 | недостижимо | недостижимо | недостижимо | 968Б (n=121.0), 1/30 достижимо | 1553Б (n=194.1) |
-| 5 | недостижимо | недостижимо | недостижимо | недостижимо | 1500Б (n=187.5), 26/30 достижимо |
+| 0 | unreachable | 2584B (n=323.0), 3/30 reachable | 1618B (n=202.2), 25/30 reachable | 886B (n=110.7) | 600B (n=75.0) |
+| 0.02 | unreachable | 4648B (n=581.0), 3/30 reachable | 1710B (n=213.8), 25/30 reachable | 886B (n=110.8) | 600B (n=75.0) |
+| 0.1 | unreachable | unreachable | 1843B (n=230.4), 24/30 reachable | 888B (n=111.0) | 598B (n=74.7) |
+| 0.5 | unreachable | unreachable | unreachable | 1207B (n=150.9) | 878B (n=109.7) |
+| 2 | unreachable | unreachable | unreachable | 968B (n=121.0), 1/30 reachable | 1553B (n=194.1) |
+| 5 | unreachable | unreachable | unreachable | unreachable | 1500B (n=187.5), 26/30 reachable |
 
-### Сравнение попарно по трекам: сплайн (time) vs DP+SED (отношение байт по общему подмножеству достижимых треков; "только один метод" -- другой метод не укладывается в tol НИ ПРИ КАКОМ числе параметров на этой клетке)
+### Pairwise comparison by track: spline (time) vs DP+SED (byte ratio over the shared subset of reachable tracks; "only one method" means the other method cannot hit tol at ANY number of parameters in this cell)
 | sigma \ tol | 0.05 | 0.2 | 1 | 5 | 20 |
 |---|---|---|---|---|---|
-| 0 | недостижимо (оба) | **1.14x** (3/30) | **0.78x** (25/30) | **0.85x** | **1.08x** |
-| 0.02 | недостижимо (оба) | **2.06x** (3/30) | **0.84x** (25/30) | **0.84x** | **1.08x** |
-| 0.1 | недостижимо (оба) | недостижимо (оба) | **1.04x** (24/30) | **0.85x** | **1.10x** |
-| 0.5 | недостижимо (оба) | недостижимо (оба) | недостижимо (оба) | **1.53x** | **2.35x** |
-| 2 | недостижимо (оба) | недостижимо (оба) | недостижимо (оба) | **0.28x** (1/30) | **1.93x** |
-| 5 | недостижимо (оба) | недостижимо (оба) | недостижимо (оба) | недостижимо (оба) | **1.16x** (26/30) |
+| 0 | unreachable (both) | **1.14x** (3/30) | **0.78x** (25/30) | **0.85x** | **1.08x** |
+| 0.02 | unreachable (both) | **2.06x** (3/30) | **0.84x** (25/30) | **0.84x** | **1.08x** |
+| 0.1 | unreachable (both) | unreachable (both) | **1.04x** (24/30) | **0.85x** | **1.10x** |
+| 0.5 | unreachable (both) | unreachable (both) | unreachable (both) | **1.53x** | **2.35x** |
+| 2 | unreachable (both) | unreachable (both) | unreachable (both) | **0.28x** (1/30) | **1.93x** |
+| 5 | unreachable (both) | unreachable (both) | unreachable (both) | unreachable (both) | **1.16x** (26/30) |
 
-Точка(и) пересечения: sigma=0: сплайн выигрывает (или единственный достижим) при tol>=1; sigma=0.02: сплайн выигрывает (или единственный достижим) при tol>=1; sigma=0.1: сплайн выигрывает (или единственный достижим) при tol>=5; sigma=2: сплайн выигрывает (или единственный достижим) при tol>=5.
+Crossover point(s): sigma=0: spline wins (or is the only one reachable) at tol>=1; sigma=0.02: spline wins (or is the only one reachable) at tol>=1; sigma=0.1: spline wins (or is the only one reachable) at tol>=5; sigma=2: spline wins (or is the only one reachable) at tol>=5.
 
-## 4. Выводы
+## 4. Conclusions
 
-Пересечение (spline/DP+SED < 1) на гладкой дорожно-подобной синтетике
-ЕСТЬ, но не там, где ожидалось изначально (простое правило "меньше
-sigma/tol -- тем лучше сплайну"), и не монотонно: при tol=1-5м и
-sigma <= 0.1м сплайн компактнее DP+SED на 15-25% (§2: 0.78-0.85x, на
-24-30 из 30 треков), но на tol=20м DP+SED снова компактнее ВО ВСЕХ
-проверенных sigma (1.08-2.35x) -- в т.ч. при sigma=0, где шума вообще
-нет. Значит выигрыш сплайна на этой геометрии -- не функция одного
-только отношения sigma/tol, а скорее следствие того, что на умеренном
-tol (1-5м) синтетические повороты (радиус 30-150м) вынуждают DP/DP+SED
-часто разрезать ломаную ради поворотов, а на грубом tol=20м DP-подобные
-методы почти всегда обходятся несколькими вершинами на весь трек, и
-уже сплайн не может угнаться по компактности. Клетки с малой долей
-достижимых треков (напр. tol=0.2, sigma<=0.02: 3/30; tol=5, sigma=2:
-1/30) статистически ненадёжны и не учитывались в выводе выше.
+A crossover (spline/DP+SED < 1) on smooth road-like synthetic data DOES
+exist, but not where initially expected (the simple rule "smaller
+sigma/tol is better for the spline"), and not monotonically: at
+tol=1-5m and sigma <= 0.1m the spline is 15-25% more compact than DP+SED
+(§2: 0.78-0.85x, on 24-30 of 30 tracks), but at tol=20m DP+SED is more
+compact again at EVERY sigma tested (1.08-2.35x) -- including sigma=0,
+where there's no noise at all. So the spline's advantage on this
+geometry is not a function of the sigma/tol ratio alone, but rather a
+consequence of the fact that at moderate tol (1-5m) the synthetic turns
+(radius 30-150m) often force DP/DP+SED to cut the polyline for the
+turns, while at a coarse tol=20m, DP-like methods almost always get by
+with a handful of vertices for the whole track, and the spline can no
+longer keep up on compactness. Cells with a small fraction of reachable
+tracks (e.g. tol=0.2, sigma<=0.02: 3/30; tol=5, sigma=2: 1/30) are
+statistically unreliable and were not used in the conclusion above.
 
-Проигрыш сплайна на грубом tol -- не артефакт FITPACK: п.3 показал, что
-`splprep` компактнее наивных равномерных узлов на всех 5 проверенных
-треках (в среднем 0.70x), т.е. адаптивное размещение узлов уже работает
-эффективно там, где его тестировали (sigma=0.1, tol=1) -- значит
-причина проигрыша на tol=20 в чём-то другом (вероятно, в самой
-честной densify-стратегии `fit()`, которая наращивает контрольные точки
-ради густой проверки МЕЖДУ исходными 1-секундными отсчётами, а не ради
-формы поворота как таковой -- за рамками этого шага, кандидат для
-отдельного исследования).
+The spline's loss at coarse tol is not a FITPACK artifact: item 3 showed
+that `splprep` is more compact than naive uniform knots on all 5 tracks
+tested (0.70x on average), i.e. adaptive knot placement is already
+working effectively where it was tested (sigma=0.1, tol=1) -- so the
+cause of the loss at tol=20 lies elsewhere (probably in `fit()`'s honest
+densify strategy itself, which grows control points for the dense check
+BETWEEN the original 1-second samples, rather than for the turn's shape
+as such -- outside this step's scope, a candidate for separate study).
 
-Какие реальные источники данных попадают в зону выигрыша (tol~1-5м,
-sigma<=0.1м, т.е. sigma/tol <~ 0.02-0.1)? Обычный смартфонный/автомобильный
-GPS (шум ~3-10м) НЕ попадает -- его собственная точность уже сравнима
-или хуже самого допуска tol=1-5м, что соответствует отрицательному
-результату step1 на реальных треках GeoLife (сжатие которых считалось
-именно при таких tol на шумных ~5-10м данных). RTK/дифференциальный GPS
-и GNSS с фазовыми поправками (точность ~0.02-0.1м) -- ПОПАДАЕТ в зону
-выигрыша, если для хранения/индексации достаточно допуска 1-5м (разумно
-для сравнения маршрутов по Фреше, избыточно для точной навигации).
-Инерциальные/лидарные системы локализации (одометрия робота, картирующие
-дроны, точность ~0.05-0.3м) -- пограничный случай, попадают в выигрышную
-зону только при tol ближе к 5м, а не к 1м. Итог: зона выигрыша сплайна
-реальна, но узкая и требует существенно более точного позиционирования,
-чем массовый потребительский GPS -- на нём (и, соответственно, на
-GeoLife) отрицательный результат step1 остаётся в силе.
+Which real data sources fall into the winning zone (tol~1-5m,
+sigma<=0.1m, i.e. sigma/tol <~ 0.02-0.1)? Ordinary smartphone/automotive
+GPS (noise ~3-10m) does NOT qualify -- its own accuracy is already
+comparable to or worse than the tol=1-5m tolerance itself, consistent
+with step1's negative result on real GeoLife tracks (whose compression
+was measured at exactly these tol values on noisy ~5-10m data). RTK/
+differential GPS and GNSS with carrier-phase corrections (accuracy
+~0.02-0.1m) DO fall into the winning zone, if a 1-5m tolerance is
+sufficient for storage/indexing (reasonable for comparing routes by
+Frechet distance, excessive for precise navigation). Inertial/lidar
+localization systems (robot odometry, mapping drones, accuracy
+~0.05-0.3m) are a borderline case, falling into the winning zone only at
+tol closer to 5m rather than 1m. Bottom line: the spline's winning zone
+is real but narrow, and requires positioning accuracy substantially
+better than mass-market consumer GPS -- on that data (and, accordingly,
+on GeoLife), step1's negative result stands.

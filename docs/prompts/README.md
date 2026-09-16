@@ -1,46 +1,51 @@
-# Индекс промптов
+# Prompt index
 
-step0-step2 давались устно/в чате (не сохранены как файлы) — их суть
-кратко пересказана ниже по [docs/history.md](../history.md). step3-step5
-даны файлами и лежат в этой директории.
+The prompt files in this directory are historical artifacts and are kept
+in Russian, as originally written — they are not translated (see
+`docs/prompts/step6_translate.md`). This index is translated to English.
 
-## step0 (в чате) — первый замер
+step0-step2 were given verbally/in chat (not saved as files) — their gist
+is summarized below, following [docs/history.md](../history.md). step3-step5
+were given as files and live in this directory.
 
-Наивное сравнение сырой ломаной, DP-ломаной и кубического сплайна
-(`scipy.interpolate.splprep`, контроль ошибки только в исходных
-временных метках) на 200 треках GeoLife по байтам, latency поиска и
-recall@10 по дискретной Фреше.
+## step0 (in chat) — first measurement
 
-## step1 (в чате) — честная методика
+A naive comparison of the raw polyline, the DP polyline, and a cubic
+spline (`scipy.interpolate.splprep`, error controlled only at the
+original timestamps) on 200 GeoLife tracks, by bytes, search latency,
+and recall@10 by discrete Frechet distance.
 
-Исправить две найденные в step0 проблемы: почистить сырые GPS-треки от
-разрывов/скачков (`clean.py`) и дополнить фиттинг сплайна честной
-проверкой ошибки МЕЖДУ временными метками, не только в них. Затем
-заново сравнить сжатие (гипотеза A) и восстановление кинематики
-(гипотеза B) сплайна против DP.
+## step1 (in chat) — honest methodology
 
-## step2 (в чате) — поиск ниши
+Fix the two problems found in step0: clean raw GPS tracks of breaks/
+jumps (`clean.py`) and augment spline fitting with an honest error check
+BETWEEN timestamps, not just at them. Then re-compare the spline's
+compression (hypothesis A) and kinematics reconstruction (hypothesis B)
+against DP.
 
-Проверить, есть ли зона (соотношение шум измерений / целевой допуск),
-где честный сплайн компактнее DP+SED, на более реалистичной (дорожной)
-синтетической геометрии — прямые с клотоидными поворотами.
+## step2 (in chat) — searching for a niche
+
+Check whether there's a zone (measurement noise / target tolerance
+ratio) where the honest spline is more compact than DP+SED, on more
+realistic (road-like) synthetic geometry — straights with clothoid
+turns.
 
 ## step3 — [`step3.md`](step3.md)
 
-Решающий эксперимент: фиттер без привязки к ломаной
-(`src/traj/spline_lsq.py`), оракул на истинной кривой, переменная
-скорость и разные шаги наблюдений, три критерия (K1-K3), зафиксированные
-до запуска.
+The decisive experiment: a fitter with no tethering to the polyline
+(`src/traj/spline_lsq.py`), an oracle on the true curve, variable speed
+and different observation steps, three criteria (K1-K3) fixed before the
+run.
 
 ## step4 — [`step4_writeup.md`](step4_writeup.md)
 
-Итоговый writeup исследования без новых экспериментов:
-`docs/findings.md`, переписанный `README.md`, закрытие исследовательской
-части в `TODO.md`, черновик `docs/blog_draft.md`.
+The final research writeup with no new experiments:
+`docs/findings.md`, a rewritten `README.md`, closing out the research
+part in `TODO.md`, a draft of `docs/blog_draft.md`.
 
 ## step5 — [`step5_history.md`](step5_history.md)
 
-Полная история проекта (включая до-репозиторный этап) и обязательное
-исправление вывода step4: `docs/history.md`, правки `docs/findings.md`
-и `docs/blog_draft.md`, `docs/next_steps.md`, этот индекс, переписанный
-`README.md`.
+The full project history (including the pre-repository stage) and the
+mandatory correction to step4's conclusion: `docs/history.md`, edits to
+`docs/findings.md` and `docs/blog_draft.md`, `docs/next_steps.md`, this
+index, a rewritten `README.md`.

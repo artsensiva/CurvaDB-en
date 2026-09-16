@@ -28,3 +28,4 @@ or extended.
 - One active phase branch at a time (step7, step8, core-extract); merge to main only after the gate in docs/ROADMAP.md is checked.
 - Acceptance sections in docs/specs/ must never be edited during a phase.
 - Products P1-P4 are NOT implemented in this repository; they get their own repositories when their gates open.
+- Do not launch background exploration or planning agents unless explicitly asked; read the files named in the spec directly. This saves the session limit.

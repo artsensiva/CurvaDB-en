@@ -1,8 +1,10 @@
 # CurvaDB — AI context
 
-The project is being built as a GPS trajectory store on cubic B-splines
-with search by discrete Frechet distance. The old code (a Hilbert index
-over embeddings, src/level1) must NOT be touched or extended.
+The research (a GPS trajectory store on cubic B-splines with search by
+discrete Frechet distance) is complete; findings are in
+`docs/findings.md`. New code only belongs in a separate branch. The old
+code (a Hilbert index over embeddings, src/level1) must NOT be touched
+or extended.
 
 - Main branch: main. Create a separate branch for new experiments.
 - Python environment: venv/ at the repo root (Python 3.14), with numpy,

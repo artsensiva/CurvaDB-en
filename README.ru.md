@@ -7,9 +7,9 @@ English version: [README.md](README.md)
 поиск по дискретной метрике Фреше"? Итог — отрицательный результат по
 сжатию для потребительского GPS; для точных данных выигрыш в
 проверенных условиях тоже не найден, но вопрос до конца не закрыт (см.
-гипотезу H1 в [docs/findings.md](docs/ru/findings.md)). Проект завершается
+гипотезу H1 в [docs/ru/findings.md](docs/ru/findings.md)). Проект завершается
 как исследование — следующий шаг не код, а интервью с отраслью (см.
-[docs/next_steps.md](docs/ru/next_steps.md)).
+[docs/ru/next_steps.md](docs/ru/next_steps.md)).
 
 ## Этапы
 
@@ -25,19 +25,19 @@ English version: [README.md](README.md)
 | step3 | Выдержит ли гипотеза решающую проверку без привязки к ломаной? | Все три критерия (K1-K3) провалены; даже оракул не компактнее DP+SED. **Вывод step2 о нише отменён.** |
 | Резолюция | Что дальше? | Не код — 8-10 интервью с отраслью; порог возврата к коду ≥3/10. |
 
-Полная хронология с цифрами и коммитами — [docs/history.md](docs/ru/history.md).
+Полная хронология с цифрами и коммитами — [docs/ru/history.md](docs/ru/history.md).
 
 ## Документы
 
-- [docs/history.md](docs/ru/history.md) — полная история проекта, от
+- [docs/ru/history.md](docs/ru/history.md) — полная история проекта, от
   исходной идеи до резолюции.
-- [docs/findings.md](docs/ru/findings.md) — итоги исследования: вопрос,
+- [docs/ru/findings.md](docs/ru/findings.md) — итоги исследования: вопрос,
   ключевые цифры, вывод, ограничения, открытые гипотезы H1/H2.
-- [docs/next_steps.md](docs/ru/next_steps.md) — резолюция, план интервью,
+- [docs/ru/next_steps.md](docs/ru/next_steps.md) — резолюция, план интервью,
   порог возврата к коду, набросок эксперимента по H2.
-- [docs/blog_draft.md](docs/ru/blog_draft.md) — текст поста для публикации (для
+- [docs/ru/blog_draft.md](docs/ru/blog_draft.md) — текст поста для публикации (для
   инженерной аудитории).
-- [docs/legacy.md](docs/ru/legacy.md) — архив README до пивота на
+- [docs/ru/legacy.md](docs/ru/legacy.md) — архив README до пивота на
   траектории (исходная идея с эмбеддингами).
 - [docs/prompts/](docs/prompts/) — промпты step3-step5 (step0-step2
   давались в чате, пересказаны в `docs/prompts/README.md`).
@@ -97,4 +97,4 @@ venv/bin/python benchmarks/step3_decisive.py           # решающий экс
 
 Level 1 (Hilbert-индекс над текстовыми эмбеддингами, `src/level1`) не
 развивается в этой ветке. Архив прежнего README — в
-[docs/legacy.md](docs/ru/legacy.md).
+[docs/ru/legacy.md](docs/ru/legacy.md).

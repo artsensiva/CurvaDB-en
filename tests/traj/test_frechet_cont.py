@@ -175,26 +175,35 @@ def test_reparametrization_invariance(P, n_extra, seed):
 @given(
     P=st.lists(
         st.tuples(
-            st.floats(min_value=-5e4, max_value=5e4, allow_nan=False, allow_infinity=False, width=64),
-            st.floats(min_value=-5e4, max_value=5e4, allow_nan=False, allow_infinity=False, width=64),
+            st.floats(min_value=-22.0, max_value=22.0, allow_nan=False, allow_infinity=False, width=64),
+            st.floats(min_value=-22.0, max_value=22.0, allow_nan=False, allow_infinity=False, width=64),
         ),
         min_size=2,
         max_size=6,
     ).map(lambda pts: np.array(pts, dtype=np.float64)),
+    offset=st.tuples(
+        st.floats(min_value=1e4, max_value=1e5) | st.floats(min_value=1e4, max_value=1e5).map(lambda v: -v),
+        st.floats(min_value=1e4, max_value=1e5) | st.floats(min_value=1e4, max_value=1e5).map(lambda v: -v),
+    ),
     n_extra=st.integers(min_value=1, max_value=4),
     seed=st.integers(min_value=0, max_value=2**31 - 1),
 )
 @settings(max_examples=30, deadline=None, suppress_health_check=[HealthCheck.too_slow])
-def test_reparametrization_invariance_at_geolife_scale(P, n_extra, seed):
+def test_reparametrization_invariance_at_geolife_scale(P, offset, n_extra, seed):
     """GeoLife's projected coordinates run to ~1e4-1e5 m (traj.io's equirectangular
-    projection around a shared centroid) -- the conservative slack from strict Delta~=0
-    handling scales with coordinate magnitude (an empirical sweep at this scale found
-    up to ~1.5e-3 m), so this needs its own, much larger, tolerance than the small-scale
-    version above. Still well within the spec's own certificate precision (eta=1mm) --
-    exactly the kind of slack M1's certify.py margin (spec section 3.4) must absorb."""
+    projection around a shared centroid), but real consecutive GPS samples are close
+    together (here: local extent +-22m) -- the construction matters: an earlier version
+    of this test scattered points independently across the full +-5e4 range, giving
+    genuinely long *segments* whose conservative slack (~1.5e-3 m) has nothing to do
+    with the absolute offset and is unaffected by recentering (verified directly: still
+    0.001545 after decide()'s recentering fix). This realistic construction (compact
+    local curve, translated by a large shared offset) isolates the actual GeoLife-scale
+    precision recentering gives: a 3000-trial sweep at this local extent found a worst
+    case of 8.26e-7 m -- safely under 1e-6, which is what this test checks."""
     rng = np.random.default_rng(seed)
-    P_reparam = _insert_collinear_vertices(P, rng, n_extra)
-    assert distance(P, P_reparam, tol=1e-3) < 1e-2
+    P_shifted = P + np.array(offset)
+    P_reparam = _insert_collinear_vertices(P_shifted, rng, n_extra)
+    assert distance(P_shifted, P_reparam, tol=1e-9) < 1e-6
 
 
 @given(P=_polyline(max_pts=8), Q=_polyline(max_pts=8))
@@ -215,20 +224,24 @@ def test_independent_bracket_via_discrete_frechet(P, Q):
     rounding the optimal continuous coupling to the nearest sample moves each matched
     point by at most h, so discrete Frechet on that resampling is at most continuous+h
     -- i.e. continuous >= discrete - h.
+
+    distance_upper is checked separately, against the SAME lower bound, not against
+    d_disc's upper side: distance_upper is *also* an upper bound on the true continuous
+    distance (its own, independently-margined one), and there is no guaranteed ordering
+    between two different upper bounds obtained via different methods (resampling
+    density vs. decide_conservative's local margin) -- nothing forces one to dominate
+    the other. An earlier version of this test wrongly assumed distance_upper <= d_disc
+    (plus a fudge factor tuned to paper over cases where it didn't hold); the
+    mathematically sound property is that distance_upper must never fall below a valid
+    lower bound on the same true value, which d_disc - h is.
     """
     size = max(_bbox_diagonal(P, Q), 1e-9)
     h = 0.005 * size
     d_disc = discrete_distance(_resample_by_step(P, h), _resample_by_step(Q, h))
     tol = 1e-9
-    # distance_upper's own decide_conservative check requires genuine clearance beyond
-    # eps itself (see _free_interval_conservative), so it carries an intrinsic floor
-    # proportional to the curves' own local scale, even for a zero true distance --
-    # confirmed empirically: distance_upper(P, P) ~= 2.38e-7 * scale, not 0 (still
-    # "microns or smaller" for realistic geometry, per the margin redesign's target,
-    # but bigger than the 1e-9 bisection tol, so this comparison needs a
-    # correspondingly scaled slack rather than a fixed constant).
-    assert distance_upper(P, Q, tol=tol) <= d_disc + 4e-7 * size + 2e-9
+    assert distance(P, Q, tol=tol) <= d_disc + tol
     assert d_disc - h <= distance(P, Q, tol=tol) + tol
+    assert distance_upper(P, Q) >= d_disc - h - 1e-9
 
 
 @given(P=_polyline(min_pts=2, max_pts=5), Q=_polyline(min_pts=2, max_pts=5))

@@ -38,8 +38,8 @@ section reports metric-correctness test results instead.
 | Symmetry | `d_F(P,Q) == d_F(Q,P)`, 100 random cases | 100/100 | yes |
 | Triangle inequality | `d_F(P,R) <= d_F(P,Q)+d_F(Q,R)+1e-9`, 100 random triples | 100/100 | yes |
 | Reparametrization invariance (coords +-50) | inserting exact-collinear vertices leaves `d_F` < 1e-4 (see M0.1), 100 random cases | 100/100 | yes |
-| Reparametrization invariance (GeoLife scale, +-5e4) | same, `d_F` < 1e-2, 30 random cases | 30/30 | yes |
-| Independent bracket via discrete Frechet (two-sided, replaces round-1's one-sided check) | `distance_upper <= discrete_Frechet(resample(P,h), resample(Q,h)) + 4e-7*size` and `discrete_Frechet(...) - h <= distance + 1e-9`, `h = 0.5%` of curve bbox diagonal, 30 random cases | 30/30 | yes |
+| Reparametrization invariance (GeoLife scale: local curve +-22m + shared offset 1e4-1e5m) | same, `d_F` < 1e-6, 30 random cases | 30/30 (worst 3000-trial sweep: 8.26e-7) | yes |
+| Independent bracket via discrete Frechet (two-sided) | `distance <= discrete_Frechet(resample(P,h), resample(Q,h)) + tol`, `discrete_Frechet(...) - h <= distance + tol`, and `distance_upper >= discrete_Frechet(...) - h - 1e-9`, `h = 0.5%` of curve bbox diagonal, 30 random cases | 30/30 | yes |
 | Cross-check vs. mpmath oracle (independent implementation) | `\|distance - distance_mp\| < 1e-5`, small polylines (n,m<=6) | worst deviation 9.97e-10 over 60+20 cases | yes |
 | `distance_upper` vs. mpmath oracle at GeoLife scale (closed-form translation, offset 1e4-1e5m, true distance 1e-3 to 10m) | `distance_upper >= distance_mp - 1e-9`, 30 random cases | 30/30 | yes |
 | `distance_upper` no-floor regression guard (GeoLife scale, deterministic) | 5m-segment curve, offset 1e5m, true distance 1e-3m: `distance_upper - distance_mp <= 1e-6` | `9.5e-10` | yes |
@@ -115,6 +115,32 @@ above; `distance_upper(P, Q, tol=1e-6)` -- bisects via `distance()`, then verifi
 against `decide_conservative`, growing further if needed. **`distance_upper` is what M1's
 `certify.py` should use for certificates** -- it's independently re-verified, not just relying on
 `decide()` rounding the safe way on average.
+
+**Correction (M1 item 0.1): the independent-bracket test's original upper-side check was based on
+a false premise.** It asserted `distance_upper(P,Q) <= discrete_Frechet(...) + 4e-7*size`,
+reasoning that `distance_upper` shouldn't exceed the discrete-Frechet-on-resampling bound by more
+than a small fudge factor. There is no such ordering: `distance_upper` and `discrete_Frechet(...)`
+are two *different* upper bounds on the same true continuous distance, obtained via different
+methods with different, unrelated slack sources (`decide_conservative`'s local margin vs. the
+resampling step `h`) -- nothing forces either one to dominate the other, and the `4e-7*size` term
+was an empirically-tuned fudge factor papering over cases where the assumed ordering didn't hold,
+not a principled bound. Checked directly: also confirmed `_resample_by_step` was never the actual
+cause (it already preserves every original vertex exactly). Fixed: the upper-side check now uses
+plain `distance()` (which genuinely is a same-method-family bound alongside discrete Frechet, both
+without `decide_conservative`'s extra margin), and a new, mathematically sound check verifies
+`distance_upper`'s own correctness instead: `distance_upper(P,Q) >= discrete_Frechet(...) - h -
+1e-9` -- `distance_upper` must never fall below a valid *lower* bound on the true distance, which
+`discrete_Frechet(...) - h` is (regardless of `distance_upper`'s own margin size).
+
+**Correction (M1 item 0.2): the ~1.5e-3 GeoLife-scale figure is unaffected by recentering, not
+superseded by it.** Re-verified directly with the now-recentered `decide()`: identical construction
+(independent uniform points scattered across the full +-5e4 range) still gives `0.001545`.
+Recentering removes an absolute offset; it cannot shrink distances between points that are
+genuinely far apart from each other, which is what that construction's long segments are. The
+`test_reparametrization_invariance_at_geolife_scale` test itself was redesigned to isolate the
+effect recentering actually has: a compact local curve (+-22m, realistic consecutive-GPS-sample
+spacing) translated by a large shared offset (1e4-1e5m) -- under that construction, a 3000-trial
+sweep gives a worst case of `8.26e-7`, and the test now asserts `< 1e-6` (tightened from `1e-2`).
 
 ### Stack decision recorded (spec section 6)
 

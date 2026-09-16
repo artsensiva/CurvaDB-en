@@ -1,17 +1,20 @@
-# CurvaDB — контекст для ИИ
+# CurvaDB — AI context
 
-Проект разворачивается в хранилище GPS-траекторий на кубических B-сплайнах
-с поиском по дискретной метрике Фреше. Старый код (Hilbert-индекс над
-эмбеддингами, src/level1) НЕ трогать и не расширять.
+The project is being built as a GPS trajectory store on cubic B-splines
+with search by discrete Frechet distance. The old code (a Hilbert index
+over embeddings, src/level1) must NOT be touched or extended.
 
-- Основная ветка: main. Для новых экспериментов создавать отдельную ветку.
-- Python-окружение: venv/ в корне (Python 3.14), установлены numpy, scipy,
-  shapely, pytest, numba. Новые зависимости не ставить без спроса.
-- Данные: data/geolife/<id_пользователя>/Trajectory/*.plt, первые 6 строк
-  каждого .plt — заголовок. data/ и venv/ в .gitignore, не коммитить.
-- .gitignore игнорирует *.csv, *.json, *.txt — это нормально, не менять его.
-  Результаты бенчмарков коммитить в виде .md.
-- Новый код: src/traj/, тесты: tests/traj/, бенчмарки: benchmarks/.
-- Команды запускать через venv/bin/python и venv/bin/pytest.
-- Коммитить после каждого завершённого пункта. Незавершённое записывать в TODO.md.
-- Отрицательный результат бенчмарка — нормальный результат, не подгонять.
+- Main branch: main. Create a separate branch for new experiments.
+- Python environment: venv/ at the repo root (Python 3.14), with numpy,
+  scipy, shapely, pytest, numba installed. Don't add new dependencies
+  without asking.
+- Data: data/geolife/<user_id>/Trajectory/*.plt, the first 6 lines of
+  each .plt are a header. data/ and venv/ are in .gitignore, don't
+  commit them.
+- .gitignore ignores *.csv, *.json, *.txt — that's expected, don't
+  change it. Commit benchmark results as .md.
+- New code: src/traj/, tests: tests/traj/, benchmarks: benchmarks/.
+- Run commands via venv/bin/python and venv/bin/pytest.
+- Commit after each completed item. Record anything unfinished in
+  TODO.md.
+- A negative benchmark result is a normal result — don't force it.

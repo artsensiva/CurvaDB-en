@@ -8,10 +8,10 @@ polyline describes this as a series of straight segments with kinks; a
 spline describes it naturally. It seems like a spline should need fewer
 parameters for the same accuracy, that derivatives (velocity,
 acceleration, curvature) come for free, and that similarity search under
-the Frechet distance shouldn't be any worse.
+the Fréchet distance shouldn't be any worse.
 
 We tested this against the classic "Douglas-Peucker (DP) simplification
-plus discrete Frechet distance" scheme, on real GeoLife tracks and on
+plus discrete Fréchet distance" scheme, on real GeoLife tracks and on
 synthetic data. Spoiler: the idea didn't survive the test. But the path
 to that conclusion turned out more interesting than the conclusion
 itself. Along the way we got three results that looked convincing and
@@ -39,7 +39,7 @@ baseline before any optimization. For GPS tracks, that parameter is
 time, which is why we picked them.
 
 Even before writing a line of code, it turned out the niche wasn't
-empty: PostGIS has a Frechet distance function, there's a MobilityDB
+empty: PostGIS has a Fréchet distance function, there's a MobilityDB
 extension for trajectories, and telematics widely uses map-matching. And
 the flashy "80 KB raw track vs. 2 KB spline" comparison was unfair — the
 real competitor is the simplified polyline, not the raw one.
@@ -53,7 +53,7 @@ tolerance.
 | Metric | DP polyline | Spline |
 |---|---|---|
 | Bytes per track | 833 | 3052 |
-| Recall@10 for Frechet search | 0.997 | 0.707 |
+| Recall@10 for Fréchet search | 0.997 | 0.707 |
 
 A recall of 0.707 means that almost a third of the "similar" tracks
 returned aren't actually the true nearest neighbors. It's tempting to
@@ -66,8 +66,8 @@ left to its own devices. A dense check showed that for 82% of tracks the
 spline drifted past the tolerance, by about 110 meters for the median
 track and by kilometers for the worst ones. The main cause turned out
 not to be GPS outliers, as we first assumed, but gaps in recording: the
-maximum interval between points correlated with the error at 0.69, while
-spatial jumps correlated at only 0.18. A cubic spline parametrized by
+maximum interval between points had a correlation of 0.69 with the
+error, versus only 0.18 for spatial jumps. A cubic spline parametrized by
 time, across a minute-long gap, "invents" a route and draws loops.
 
 The DP polyline, by contrast, holds its tolerance along the entire line
@@ -82,8 +82,8 @@ method is actually used, not wherever it's convenient to check it.
 ## An honest methodology, and still a loss
 
 We fixed two things. Tracks now get split at gaps longer than 30 seconds
-and at unrealistic speeds above 70 m/s: the 200 original files broke
-into 585 separate trips. And fitting now checks the error on a dense
+and at unrealistic speeds above 70 m/s: the 200 original files yielded
+585 usable trips. And fitting now checks the error on a dense
 grid between points, adding knots wherever the tolerance is violated.
 All 585 tracks passed the check.
 
@@ -107,7 +107,7 @@ encouraging trend too: the gap with DP+SED shrank as the tolerance got
 tighter, from 3.4x at 50 meters to 1.4x at 2 meters. That's consistent
 with approximation theory: on a smooth curve, a polyline's parameter
 count grows faster than a cubic spline's. On noisy consumer GPS with
-5-15m accuracy, though, the track simply isn't smooth at the scale of
+5–15 m accuracy, though, the track simply isn't smooth at the scale of
 the tolerance.
 
 Along the way we also checked kinematics on synthetic data with known
@@ -131,8 +131,8 @@ the ground-truth curve, and each method's internal parameter was tuned
 separately.
 
 The result looked like a real finding: with no noise, the spline was
-22% more compact than DP+SED at a 1m tolerance and 15% more compact at
-5m. It seemed like we'd found a niche for high-precision positioning
+22% more compact than DP+SED at a 1 m tolerance and 15% more compact at
+5 m. It seemed like we'd found a niche for high-precision positioning
 (RTK, lidar).
 
 But there was something odd in the tables. The fraction of tracks where
@@ -141,7 +141,7 @@ spline and the polyline, in every cell: 3 of 30, 25 of 30, 24 of 30, 26
 of 30. And even with zero noise, a 20-centimeter tolerance was
 unreachable almost everywhere. For the polyline that's explainable: the
 chord between neighboring points deviates from the arc by L²/8R, and at
-20 m/s on a 30m-radius turn that's 1.7 meters. But a smooth cubic
+20 m/s on a 30 m-radius turn that's 1.7 meters. But a smooth cubic
 spline through exact samples should describe the arc to centimeter
 accuracy.
 
@@ -183,28 +183,28 @@ the earlier steps.
 - K2, sparse observations: at a step of 5 seconds or more, there are
   cells where the spline reaches 80% of tracks while DP+SED reaches at
   most 20%;
-- K3, heavy noise: at 5m of noise there's a tolerance with that same
+- K3, heavy noise: at 5 m of noise there's a tolerance with that same
   80%-vs-20% split.
 
-The freed spline really did show its worth. At a 1s step, no noise, and
-a 0.5m tolerance, it hit the tolerance on 14 of 15 tracks, versus only 5
+The freed spline really did show its worth. At a 1 s step, no noise, and
+a 0.5 m tolerance, it hit the tolerance on 14 of 15 tracks, versus only 5
 for DP+SED. The tethering hypothesis was confirmed.
 
 But all three criteria failed. After zlib compression, the spline's
 advantage never exceeded 7% (a ratio of 0.93-0.99). At a 5-second step,
 DP+SED is almost always unreachable, but the spline only hit the
-tolerance on at most 8 of 15 tracks. At 5m of noise, at most 7 of 15.
+tolerance on at most 8 of 15 tracks. At 5 m of noise, at most 7 of 15.
 
 The decisive piece was the oracle table:
 
-| Tolerance, m | Oracle (spline on the true curve) | DP+SED on noisy samples |
+| Tolerance, m | Oracle (spline on the true curve) | DP+SED on 1-second samples (no noise) |
 |---|---|---|
 | 2 | 457 B | 467 B |
 | 10 | 292 B | 278 B |
 
 A spline that knows the ideal curve takes up about as much space as a
-polyline built from real, noisy data. No amount of fitter improvement or
-regularization can beat what the oracle already shows as the ceiling.
+polyline built from ordinary 1-second samples. No amount of fitter
+improvement or regularization can beat the oracle under these conditions.
 
 ## Mistake three, which we almost missed
 

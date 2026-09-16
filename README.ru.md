@@ -72,7 +72,9 @@ venv/bin/python benchmarks/step3_decisive.py --pilot   # решающий экс
 venv/bin/python benchmarks/step3_decisive.py           # решающий эксперимент (полный прогон)
 ```
 
-Каждый скрипт пишет свою секцию в `benchmarks/results/<step>.md`.
+Каждый скрипт пишет свою секцию в `benchmarks/results/<step>.md`
+(в этом репозитории отчёты на английском; русские копии — в
+docs/ru/results/, скриптами не обновляются).
 
 ## Известные альтернативы
 

@@ -22,12 +22,10 @@ there, in the "Not investigated" section.
   minutes per script) if desired, but the conclusions (item 7) are
   robust to sample size (verified at 585/585 for search).
 
-- step7 M0 review (`docs/reviews/step7_M0.md`), finding 4: `decide()` (and
-  now also `decide_conservative()`, added in M0.1 round 2) in
-  `src/traj/frechet_cont.py` allocate four `O(n*m)` arrays per call
-  (`left_lo/hi`, `bot_lo/hi`, plus the reachability arrays). Fine for
-  M0/M1's per-track certificate computation, but M3's interval queries
-  call `decide`/`distance`/`distance_upper` many times per query — worth
-  revisiting then by keeping only the current and previous DP row
-  (`O(n+m)` memory, two rows instead of full `O(n*m)` tables) for both
-  kernels. Not fixed now — no query workload to benchmark against yet.
+- RESOLVED (step7 M0 review, `docs/reviews/step7_M0.md`, finding 4): rolling-row
+  (`O(n+m)` memory) DP kernels `_decide_core_rolling` /
+  `_decide_core_conservative_rolling` added in `src/traj/frechet_cont.py` (M1),
+  used automatically by `decide()`/`decide_conservative()` when `n*m >
+  5_000_000` (S2's spline-vs-original-track certificates can reach that size).
+  Verified identical to the original `O(nm)` kernels via
+  `test_rolling_dp_matches_full_dp` (200 random cases, exact boolean match).

@@ -142,6 +142,109 @@ def _decide_core(P, Q, eps2):
     return bool(l_ok[n, m - 1] or b_ok[n - 1, m])
 
 
+@njit(cache=True)
+def _decide_core_rolling(P, Q, eps2):
+    """Same recurrence as _decide_core, but keeping only the current and previous
+    i-row of each DP array (O(m) memory, independent of n) instead of full (n+1, m) /
+    (n, m+1) tables. Used automatically for large n*m -- see decide()."""
+    n = P.shape[0] - 1
+    m = Q.shape[0] - 1
+
+    dx0 = P[0, 0] - Q[0, 0]
+    dy0 = P[0, 1] - Q[0, 1]
+    feasible00 = (dx0 * dx0 + dy0 * dy0) <= eps2
+    dxn = P[n, 0] - Q[m, 0]
+    dyn = P[n, 1] - Q[m, 1]
+    feasible_nm = (dxn * dxn + dyn * dyn) <= eps2
+    if not feasible_nm or not feasible00:
+        return False
+
+    prev_l_ok = np.zeros(m, dtype=np.bool_)
+    prev_l_reach = np.zeros(m, dtype=np.float64)
+    prev_b_ok = np.zeros(m + 1, dtype=np.bool_)
+    prev_b_reach = np.zeros(m + 1, dtype=np.float64)
+    prev_bot_hi = np.zeros(m + 1, dtype=np.float64)
+
+    cur_l_ok = np.zeros(m, dtype=np.bool_)
+    cur_l_reach = np.zeros(m, dtype=np.float64)
+    cur_left_hi = np.zeros(m, dtype=np.float64)
+    cur_b_ok = np.zeros(m + 1, dtype=np.bool_)
+    cur_b_reach = np.zeros(m + 1, dtype=np.float64)
+    cur_bot_hi = np.zeros(m + 1, dtype=np.float64)
+
+    for i in range(n + 1):
+        for j in range(m):
+            lo, hi = _free_interval(Q[j, 0], Q[j, 1], Q[j + 1, 0], Q[j + 1, 1], P[i, 0], P[i, 1], eps2)
+            cur_left_hi[j] = hi
+            if lo > hi:
+                cur_l_ok[j] = False
+                continue
+            entire = False
+            if i == 0 and j == 0 and feasible00:
+                entire = True
+            if not entire and i >= 1 and prev_b_ok[j]:
+                entire = True
+            if not entire and j >= 1 and cur_l_ok[j - 1]:
+                if cur_left_hi[j - 1] == 1.0 and lo == 0.0:
+                    entire = True
+            if entire:
+                cur_l_ok[j] = True
+                cur_l_reach[j] = lo
+            elif i >= 1 and prev_l_ok[j]:
+                new_lo = prev_l_reach[j]
+                if new_lo < lo:
+                    new_lo = lo
+                if new_lo <= hi:
+                    cur_l_ok[j] = True
+                    cur_l_reach[j] = new_lo
+                else:
+                    cur_l_ok[j] = False
+            else:
+                cur_l_ok[j] = False
+
+        if i < n:
+            for j in range(m + 1):
+                lo, hi = _free_interval(P[i, 0], P[i, 1], P[i + 1, 0], P[i + 1, 1], Q[j, 0], Q[j, 1], eps2)
+                cur_bot_hi[j] = hi
+                if lo > hi:
+                    cur_b_ok[j] = False
+                    continue
+                entire = False
+                if i == 0 and j == 0 and feasible00:
+                    entire = True
+                if not entire and j >= 1 and cur_l_ok[j - 1]:
+                    entire = True
+                if not entire and i >= 1 and prev_b_ok[j]:
+                    if prev_bot_hi[j] == 1.0 and lo == 0.0:
+                        entire = True
+                if entire:
+                    cur_b_ok[j] = True
+                    cur_b_reach[j] = lo
+                elif j >= 1 and cur_b_ok[j - 1]:
+                    new_lo = cur_b_reach[j - 1]
+                    if new_lo < lo:
+                        new_lo = lo
+                    if new_lo <= hi:
+                        cur_b_ok[j] = True
+                        cur_b_reach[j] = new_lo
+                    else:
+                        cur_b_ok[j] = False
+                else:
+                    cur_b_ok[j] = False
+
+            prev_b_ok = cur_b_ok.copy()
+            prev_b_reach = cur_b_reach.copy()
+            prev_bot_hi = cur_bot_hi.copy()
+
+        prev_l_ok = cur_l_ok.copy()
+        prev_l_reach = cur_l_reach.copy()
+
+    return bool(prev_l_ok[m - 1] or prev_b_ok[m])
+
+
+_ROLLING_THRESHOLD = 5_000_000
+
+
 def decide(P: np.ndarray, Q: np.ndarray, eps: float) -> bool:
     """Decide whether the continuous Frechet distance between polylines P and Q is <= eps."""
     if eps < 0.0:
@@ -154,7 +257,11 @@ def decide(P: np.ndarray, Q: np.ndarray, eps: float) -> bool:
     # every coordinate fed into the DP small (local), regardless of how far P, Q sit
     # from an arbitrary absolute origin (e.g. GeoLife's shared projection centroid).
     origin = P[0].copy()
-    return _decide_core(P - origin, Q - origin, eps * eps)
+    P_local, Q_local = P - origin, Q - origin
+    n, m = P_local.shape[0] - 1, Q_local.shape[0] - 1
+    if n * m > _ROLLING_THRESHOLD:
+        return _decide_core_rolling(P_local, Q_local, eps * eps)
+    return _decide_core(P_local, Q_local, eps * eps)
 
 
 def distance(P: np.ndarray, Q: np.ndarray, tol: float = 1e-6) -> float:
@@ -321,6 +428,111 @@ def _decide_core_conservative(P, Q, eps):
     return bool(l_ok[n, m - 1] or b_ok[n - 1, m])
 
 
+@njit(cache=True)
+def _decide_core_conservative_rolling(P, Q, eps):
+    """Rolling-row counterpart of _decide_core_conservative (see _decide_core_rolling
+    for the memory-layout rationale; same O(m) rolling-row structure, using the
+    conservative per-cell/per-corner margins from _free_interval_conservative)."""
+    n = P.shape[0] - 1
+    m = Q.shape[0] - 1
+
+    dx0 = P[0, 0] - Q[0, 0]
+    dy0 = P[0, 1] - Q[0, 1]
+    d0 = (dx0 * dx0 + dy0 * dy0) ** 0.5
+    margin0 = 64.0 * _MACHINE_EPS * (d0 + eps) * (d0 + eps)
+    feasible00 = d0 * d0 <= eps * eps - margin0
+
+    dxn = P[n, 0] - Q[m, 0]
+    dyn = P[n, 1] - Q[m, 1]
+    dn = (dxn * dxn + dyn * dyn) ** 0.5
+    marginn = 64.0 * _MACHINE_EPS * (dn + eps) * (dn + eps)
+    feasible_nm = dn * dn <= eps * eps - marginn
+    if not feasible_nm or not feasible00:
+        return False
+
+    prev_l_ok = np.zeros(m, dtype=np.bool_)
+    prev_l_reach = np.zeros(m, dtype=np.float64)
+    prev_b_ok = np.zeros(m + 1, dtype=np.bool_)
+    prev_b_reach = np.zeros(m + 1, dtype=np.float64)
+    prev_bot_hi = np.zeros(m + 1, dtype=np.float64)
+
+    cur_l_ok = np.zeros(m, dtype=np.bool_)
+    cur_l_reach = np.zeros(m, dtype=np.float64)
+    cur_left_hi = np.zeros(m, dtype=np.float64)
+    cur_b_ok = np.zeros(m + 1, dtype=np.bool_)
+    cur_b_reach = np.zeros(m + 1, dtype=np.float64)
+    cur_bot_hi = np.zeros(m + 1, dtype=np.float64)
+
+    for i in range(n + 1):
+        for j in range(m):
+            lo, hi = _free_interval_conservative(Q[j, 0], Q[j, 1], Q[j + 1, 0], Q[j + 1, 1], P[i, 0], P[i, 1], eps)
+            cur_left_hi[j] = hi
+            if lo > hi:
+                cur_l_ok[j] = False
+                continue
+            entire = False
+            if i == 0 and j == 0 and feasible00:
+                entire = True
+            if not entire and i >= 1 and prev_b_ok[j]:
+                entire = True
+            if not entire and j >= 1 and cur_l_ok[j - 1]:
+                if cur_left_hi[j - 1] == 1.0 and lo == 0.0:
+                    entire = True
+            if entire:
+                cur_l_ok[j] = True
+                cur_l_reach[j] = lo
+            elif i >= 1 and prev_l_ok[j]:
+                new_lo = prev_l_reach[j]
+                if new_lo < lo:
+                    new_lo = lo
+                if new_lo <= hi:
+                    cur_l_ok[j] = True
+                    cur_l_reach[j] = new_lo
+                else:
+                    cur_l_ok[j] = False
+            else:
+                cur_l_ok[j] = False
+
+        if i < n:
+            for j in range(m + 1):
+                lo, hi = _free_interval_conservative(P[i, 0], P[i, 1], P[i + 1, 0], P[i + 1, 1], Q[j, 0], Q[j, 1], eps)
+                cur_bot_hi[j] = hi
+                if lo > hi:
+                    cur_b_ok[j] = False
+                    continue
+                entire = False
+                if i == 0 and j == 0 and feasible00:
+                    entire = True
+                if not entire and j >= 1 and cur_l_ok[j - 1]:
+                    entire = True
+                if not entire and i >= 1 and prev_b_ok[j]:
+                    if prev_bot_hi[j] == 1.0 and lo == 0.0:
+                        entire = True
+                if entire:
+                    cur_b_ok[j] = True
+                    cur_b_reach[j] = lo
+                elif j >= 1 and cur_b_ok[j - 1]:
+                    new_lo = cur_b_reach[j - 1]
+                    if new_lo < lo:
+                        new_lo = lo
+                    if new_lo <= hi:
+                        cur_b_ok[j] = True
+                        cur_b_reach[j] = new_lo
+                    else:
+                        cur_b_ok[j] = False
+                else:
+                    cur_b_ok[j] = False
+
+            prev_b_ok = cur_b_ok.copy()
+            prev_b_reach = cur_b_reach.copy()
+            prev_bot_hi = cur_bot_hi.copy()
+
+        prev_l_ok = cur_l_ok.copy()
+        prev_l_reach = cur_l_reach.copy()
+
+    return bool(prev_l_ok[m - 1] or prev_b_ok[m])
+
+
 def decide_conservative(P: np.ndarray, Q: np.ndarray, eps: float) -> bool:
     """Stricter than decide(): also requires clearance beyond the natural float64
     cancellation noise at the Delta~=0 boundary, via a per-cell local margin (see
@@ -335,7 +547,11 @@ def decide_conservative(P: np.ndarray, Q: np.ndarray, eps: float) -> bool:
     if P.shape[0] < 2 or Q.shape[0] < 2:
         raise ValueError("P and Q must each have at least 2 vertices (1 segment)")
     origin = P[0].copy()
-    return _decide_core_conservative(P - origin, Q - origin, eps)
+    P_local, Q_local = P - origin, Q - origin
+    n, m = P_local.shape[0] - 1, Q_local.shape[0] - 1
+    if n * m > _ROLLING_THRESHOLD:
+        return _decide_core_conservative_rolling(P_local, Q_local, eps)
+    return _decide_core_conservative(P_local, Q_local, eps)
 
 
 def distance_upper(P: np.ndarray, Q: np.ndarray, tol: float = 1e-6) -> float:

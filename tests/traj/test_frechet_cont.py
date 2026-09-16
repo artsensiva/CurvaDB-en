@@ -8,7 +8,15 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from traj.frechet import distance as discrete_distance
-from traj.frechet_cont import decide, distance, distance_upper
+from traj.frechet_cont import (
+    _decide_core,
+    _decide_core_conservative,
+    _decide_core_conservative_rolling,
+    _decide_core_rolling,
+    decide,
+    distance,
+    distance_upper,
+)
 
 from ._frechet_cont_mpmath import distance_mp
 
@@ -303,3 +311,20 @@ def test_distance_upper_no_floor_at_geolife_scale():
     d_up = distance_upper(P, Q, tol=1e-9)
     d_ref = float(distance_mp(P.tolist(), Q.tolist(), tol=1e-12, dps=40))
     assert d_up - d_ref <= 1e-6
+
+
+@given(
+    P=_polyline(min_pts=2, max_pts=26),
+    Q=_polyline(min_pts=2, max_pts=26),
+    eps=st.floats(min_value=0.0, max_value=150.0, allow_nan=False, allow_infinity=False),
+)
+@settings(max_examples=200, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+def test_rolling_dp_matches_full_dp(P, Q, eps):
+    """The O(m)-memory rolling-row kernels (used automatically for large n*m, see
+    decide()/decide_conservative()) must give IDENTICAL boolean results to the
+    original O(nm) kernels for every input -- mandatory verification per the M1
+    plan, since a rolling-row rewrite is exactly the kind of change that can
+    silently drop a boundary case."""
+    eps2 = eps * eps
+    assert bool(_decide_core(P, Q, eps2)) == bool(_decide_core_rolling(P, Q, eps2))
+    assert bool(_decide_core_conservative(P, Q, eps)) == bool(_decide_core_conservative_rolling(P, Q, eps))

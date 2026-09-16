@@ -46,45 +46,45 @@ Search: Query → Hilbert distance → Range query → Rerank → Top-K
 
 ### Компоненты (6 модулей, ~600 LOC)
 
-#### 1. TextEmbedder ([src/level1/embedder.py](../src/level1/embedder.py))
+#### 1. TextEmbedder ([src/level1/embedder.py](../../src/level1/embedder.py))
 - **Назначение**: Преобразование текста в dense embeddings
 - **Модель**: `all-MiniLM-L6-v2` (384 dimensions)
 - **Технологии**: SentenceTransformers
 - **Возможности**: Batch encoding, GPU support
 
-#### 2. DimensionalityReducer ([src/level1/reducer.py](../src/level1/reducer.py))
+#### 2. DimensionalityReducer ([src/level1/reducer.py](../../src/level1/reducer.py))
 - **Назначение**: PCA reduction + normalization
 - **Входные данные**: 384D embeddings
 - **Выходные данные**: 12D normalized integers [0, 1023]
 - **Особенности**: Fit на первом батче, сохранение модели
 
-#### 3. HilbertIndexer ([src/level1/hilbert_index.py](../src/level1/hilbert_index.py))
+#### 3. HilbertIndexer ([src/level1/hilbert_index.py](../../src/level1/hilbert_index.py))
 - **Назначение**: Преобразование N-D → 1-D Hilbert distance
 - **Библиотека**: `hilbertcurve`
 - **Конфигурация**: p=10 bits, n=12 dimensions → max distance 2^120
 - **Теория**: Сохраняет пространственную локальность
 
-#### 4. LMDBStorage ([src/level1/storage.py](../src/level1/storage.py))
+#### 4. LMDBStorage ([src/level1/storage.py](../../src/level1/storage.py))
 - **Назначение**: Key-value storage с range queries
 - **LMDB**: Lightning Memory-Mapped Database
 - **Ключи**: 128-bit Hilbert distances (16 bytes)
 - **Значения**: JSON metadata (doc_id, text, emb_idx)
 - **Map size**: 100MB (оптимизировано с 10GB)
 
-#### 5. EmbeddingStore ([src/level1/embedding_store.py](../src/level1/embedding_store.py))
+#### 5. EmbeddingStore ([src/level1/embedding_store.py](../../src/level1/embedding_store.py))
 - **Назначение**: Compact storage для embeddings
 - **Технология**: numpy memmap (memory-mapped files)
 - **Формат**: float32 array shape (capacity, 384)
 - **Auto-expansion**: Динамическое увеличение capacity
 - **Преимущества**: Низкое потребление RAM, быстрый доступ
 
-#### 6. SearchEngine ([src/level1/search.py](../src/level1/search.py))
+#### 6. SearchEngine ([src/level1/search.py](../../src/level1/search.py))
 - **Назначение**: Two-stage retrieval
 - **Stage 1**: Approximate search via Hilbert range query
 - **Stage 2**: Reranking by cosine similarity
 - **Radius**: Adaptive (20% → 50% при недостатке кандидатов)
 
-#### 7. MinimalCurveDB ([src/level1/minimal_db.py](../src/level1/minimal_db.py))
+#### 7. MinimalCurveDB ([src/level1/minimal_db.py](../../src/level1/minimal_db.py))
 - **Назначение**: Main API class
 - **Методы**: `add_batch()`, `search()`, `count()`, `close()`
 - **Context manager**: Поддержка `with` statement
@@ -112,7 +112,7 @@ struct.error: int too large to convert
   ```
 - Финальная конфигурация: p=10, n=12 → 2^120 (fits in 128 bits)
 
-**Файлы**: [src/level1/storage.py](../src/level1/storage.py) lines 50-55
+**Файлы**: [src/level1/storage.py](../../src/level1/storage.py) lines 50-55
 
 ---
 
@@ -142,7 +142,7 @@ if len(candidates) < k:
 
 **Результат**: Все равно низкий recall (см. бенчмарки)
 
-**Файлы**: [src/level1/minimal_db.py](../src/level1/minimal_db.py) lines 198-240
+**Файлы**: [src/level1/minimal_db.py](../../src/level1/minimal_db.py) lines 198-240
 
 ---
 
@@ -166,9 +166,9 @@ if len(candidates) < k:
 - 10K docs: 116 MB (было бы ~100GB)
 
 **Файлы**:
-- [src/level1/embedding_store.py](../src/level1/embedding_store.py) (новый модуль)
-- [src/level1/storage.py](../src/level1/storage.py) lines 18-20
-- [src/level1/minimal_db.py](../src/level1/minimal_db.py) lines 80-83, 147-163
+- [src/level1/embedding_store.py](../../src/level1/embedding_store.py) (новый модуль)
+- [src/level1/storage.py](../../src/level1/storage.py) lines 18-20
+- [src/level1/minimal_db.py](../../src/level1/minimal_db.py) lines 80-83, 147-163
 
 ---
 
@@ -195,7 +195,7 @@ self.embeddings = np.memmap(
 )
 ```
 
-**Файлы**: [src/level1/embedding_store.py](../src/level1/embedding_store.py) lines 153-159
+**Файлы**: [src/level1/embedding_store.py](../../src/level1/embedding_store.py) lines 153-159
 
 ---
 
@@ -419,7 +419,7 @@ Level 1 служит **proof-of-concept** и **baseline** для Level 2:
 | Recall 0.7% | Ожидаемый Recall >90% с FPCA |
 | Деградация при росте | Масштабируемые curve-based индексы |
 
-**Level 2 Roadmap** (см. [SPECIFY.md](../SPECIFY.md)):
+**Level 2 Roadmap** (см. [SPECIFY.md](../../SPECIFY.md)):
 - Functional PCA для temporal/semantic patterns
 - B-spline/Bezier curve representation
 - Curve similarity metrics (Fréchet distance)

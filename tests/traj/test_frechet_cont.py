@@ -8,7 +8,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from traj.frechet import distance as discrete_distance
-from traj.frechet_cont import decide, distance
+from traj.frechet_cont import decide, distance, distance_upper
 
 from ._frechet_cont_mpmath import distance_mp
 
@@ -54,6 +54,28 @@ def _densify(P: np.ndarray, points_per_segment: int) -> np.ndarray:
             t = k / points_per_segment
             out.append(P[seg] + t * (P[seg + 1] - P[seg]))
     return np.array(out, dtype=np.float64)
+
+
+def _resample_by_step(P: np.ndarray, h: float) -> np.ndarray:
+    """Resample P (same curve) so consecutive points are at most h apart (arc-length),
+    always keeping the original vertices. Unlike _densify's fixed per-segment count,
+    this makes h a meaningful, curve-independent discretization step."""
+    n = P.shape[0] - 1
+    out = [P[0]]
+    for seg in range(n):
+        seg_len = float(np.hypot(*(P[seg + 1] - P[seg])))
+        count = min(int(np.ceil(seg_len / h)) if h > 0.0 else 1, 500)
+        count = max(count, 1)
+        for k in range(1, count + 1):
+            t = k / count
+            out.append(P[seg] + t * (P[seg + 1] - P[seg]))
+    return np.array(out, dtype=np.float64)
+
+
+def _bbox_diagonal(*polylines: np.ndarray) -> float:
+    stacked = np.vstack(polylines)
+    span = np.max(stacked, axis=0) - np.min(stacked, axis=0)
+    return float(np.hypot(*span))
 
 
 # --- example-based sanity tests (mirror tests/traj/test_frechet.py's style) ---
@@ -175,20 +197,38 @@ def test_reparametrization_invariance_at_geolife_scale(P, n_extra, seed):
     assert distance(P, P_reparam, tol=1e-3) < 1e-2
 
 
-@given(P=_polyline(min_pts=2, max_pts=5), Q=_polyline(min_pts=2, max_pts=5))
+@given(P=_polyline(max_pts=8), Q=_polyline(max_pts=8))
 @settings(max_examples=30, deadline=None, suppress_health_check=[HealthCheck.too_slow])
-def test_bounded_above_by_dense_discrete_frechet(P, Q):
-    """Discrete Frechet distance on ANY sampling of two curves is a mathematically
-    guaranteed upper bound on their continuous Frechet distance -- a discrete
-    vertex-to-vertex coupling is a restricted special case of the continuous
-    reparametrization space, so the DP that minimizes over the smaller space can only
-    find a value >= the one minimizing over the larger space. This holds regardless of
-    sampling density, and traj.frechet's Eiter-Mannila DP is a genuinely different
-    algorithm (not sharing this module's free-space-diagram code, unlike the mpmath
-    oracle, which re-derives the same recurrence)."""
-    d_cont = distance(P, Q, tol=1e-6)
-    d_disc = discrete_distance(_densify(P, 25), _densify(Q, 25))
-    assert d_cont <= d_disc + 1e-6
+def test_independent_bracket_via_discrete_frechet(P, Q):
+    """Two-sided bracket on the true continuous distance from a genuinely different
+    algorithm (traj.frechet's Eiter-Mannila DP, not sharing this module's free-space-
+    diagram code, unlike the mpmath oracle which re-derives the same recurrence).
+
+    Upper side: discrete Frechet distance on ANY sampling of two curves is a
+    mathematically guaranteed upper bound on their continuous Frechet distance -- a
+    discrete vertex-to-vertex coupling is a restricted special case of the continuous
+    reparametrization space, so the DP minimizing over the smaller space can only find
+    a value >= the one minimizing over the larger space. Holds at any density, so
+    distance_upper (the certificate-grade bound) must not exceed it either.
+
+    Lower side: resampling each curve so consecutive points are at most h apart means
+    rounding the optimal continuous coupling to the nearest sample moves each matched
+    point by at most h, so discrete Frechet on that resampling is at most continuous+h
+    -- i.e. continuous >= discrete - h.
+    """
+    size = max(_bbox_diagonal(P, Q), 1e-9)
+    h = 0.005 * size
+    d_disc = discrete_distance(_resample_by_step(P, h), _resample_by_step(Q, h))
+    tol = 1e-9
+    # distance_upper's own decide_conservative check requires genuine clearance beyond
+    # eps itself (see _free_interval_conservative), so it carries an intrinsic floor
+    # proportional to the curves' own local scale, even for a zero true distance --
+    # confirmed empirically: distance_upper(P, P) ~= 2.38e-7 * scale, not 0 (still
+    # "microns or smaller" for realistic geometry, per the margin redesign's target,
+    # but bigger than the 1e-9 bisection tol, so this comparison needs a
+    # correspondingly scaled slack rather than a fixed constant).
+    assert distance_upper(P, Q, tol=tol) <= d_disc + 4e-7 * size + 2e-9
+    assert d_disc - h <= distance(P, Q, tol=tol) + tol
 
 
 @given(P=_polyline(min_pts=2, max_pts=5), Q=_polyline(min_pts=2, max_pts=5))
@@ -206,3 +246,47 @@ def test_decide_monotone_in_eps(P, Q):
     samples = sorted({max(0.0, d - 1.0), max(0.0, d - 0.01), d + 0.01, d + 1.0, d + 10.0})
     results = [decide(P, Q, e) for e in samples]
     assert results == sorted(results)
+
+
+@given(
+    P=_polyline(min_pts=2, max_pts=5).map(lambda p: p * 4.0),  # modest local scale (~+-200)
+    offset=st.tuples(
+        st.floats(min_value=1e4, max_value=1e5) | st.floats(min_value=1e4, max_value=1e5).map(lambda v: -v),
+        st.floats(min_value=1e4, max_value=1e5) | st.floats(min_value=1e4, max_value=1e5).map(lambda v: -v),
+    ),
+    delta_mag=st.floats(min_value=1e-3, max_value=10.0),
+    delta_angle=st.floats(min_value=0.0, max_value=2 * np.pi, allow_nan=False),
+)
+@settings(max_examples=30, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+def test_distance_upper_vs_mpmath_at_geolife_scale(P, offset, delta_mag, delta_angle):
+    """distance_upper must not underestimate the trusted mpmath oracle at GeoLife-
+    realistic absolute coordinate scale (offset ~1e4-1e5 m) with certificate-relevant
+    eps/true-distance values (~1e-3 to 10 m). Q is P translated by a known vector, so
+    the true distance is exactly delta_mag by construction -- also confirms
+    translation locality (point 1): if recentering were broken, this would drift with
+    the offset."""
+    P_shifted = P + np.array(offset)
+    delta_vec = delta_mag * np.array([np.cos(delta_angle), np.sin(delta_angle)])
+    Q_shifted = P_shifted + delta_vec
+    d_up = distance_upper(P_shifted, Q_shifted, tol=1e-3)
+    d_ref = float(distance_mp(P_shifted.tolist(), Q_shifted.tolist(), tol=1e-6, dps=40))
+    assert d_up >= d_ref - 1e-9
+    assert abs(d_ref - delta_mag) < 1e-3  # confirms the closed-form construction itself
+
+
+def test_distance_upper_no_floor_at_geolife_scale():
+    """Regression guard for the review's mandatory correction: an earlier version of
+    decide_conservative computed its margin from the overall coordinate magnitude,
+    giving a ~6-12mm floor regardless of how small the true distance was -- wrong on
+    principle, since Frechet distance is translation-invariant. The fix (local,
+    per-cell margin from each cell's own |a-p|+|b-a|+eps, plus recentering on a common
+    origin) must not reintroduce any such floor: a short segment, offset by 1e5 m,
+    with a true distance of exactly 1e-3 m, should have distance_upper within
+    microns of the mpmath oracle, not millimeters."""
+    origin_offset = np.array([1e5, -1e5])
+    P = np.array([[0.0, 0.0], [5.0, 0.0]]) + origin_offset
+    delta_mag = 1e-3
+    Q = P + np.array([delta_mag, 0.0])
+    d_up = distance_upper(P, Q, tol=1e-9)
+    d_ref = float(distance_mp(P.tolist(), Q.tolist(), tol=1e-12, dps=40))
+    assert d_up - d_ref <= 1e-6

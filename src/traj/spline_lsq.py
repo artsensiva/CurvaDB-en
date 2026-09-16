@@ -115,51 +115,59 @@ def _make_fit(bs: BSpline, t: np.ndarray, err: float, converged: bool, knot_mode
 def _bisect_fit(t: np.ndarray, xy: np.ndarray, tol: float, k: int, max_iter: int, knot_mode: str) -> LsqSplineFit:
     """Растим число внутренних узлов m (экспоненциально), пока честная
     ошибка (прямой остаток в точках) не станет <= tol, затем бисекция на
-    минимальное m -- по аналогии с ростом `s`/бисекцией в spline.fit()."""
+    минимальное m -- по аналогии с ростом `s`/бисекцией в spline.fit().
+
+    m_max -- теоретический потолок (n-k-2, столько узлов ещё оставляет
+    систему МНК переопределённой). У самой границы (почти-интерполяция
+    на зашумлённых данных) изредка возникает численный разрыв ошибки на
+    1-2 порядка -- поэтому в ходе роста отслеживается ЛУЧШИЙ (не
+    последний) результат; если tol недостижим, возвращается именно он,
+    а не потенциально испорченная попытка у самой границы m_max."""
     n = len(t)
-    # Не растим m до почти-интерполяции (m -> n-k-2): при < (k+2) отсчётов
-    # на узловой промежуток LSQ-система становится численно плохо
-    # обусловленной (наблюдался разрыв ошибки на 1-2 порядка у самой
-    # границы диапазона на зашумлённых данных) -- держим средний запас
-    # >= k+2 отсчётов на промежуток.
-    m_max = max(n // (k + 2) - 1, 0)
+    m_max = max(n - k - 2, 0)
     build = _build_adaptive if knot_mode == "adaptive" else _build_uniform
 
-    bs_lo, err_lo = build(t, xy, k, 0)
-    if err_lo <= tol or m_max == 0:
-        return _make_fit(bs_lo, t, err_lo, err_lo <= tol, knot_mode, 0)
+    best_bs, best_err = build(t, xy, k, 0)
+    best_m = 0
+    if best_err <= tol or m_max == 0:
+        return _make_fit(best_bs, t, best_err, best_err <= tol, knot_mode, 0)
 
     m_lo, m_hi = 0, 1
-    bs_hi, err_hi = None, float("inf")
+    success = None  # (bs, err, m) -- первое m, достигшее tol
     grown = 0
     while grown < max_iter:
         try:
             bs_hi, err_hi = build(t, xy, k, m_hi)
         except (ValueError, np.linalg.LinAlgError):
-            err_hi = float("inf")
-        if err_hi <= tol or m_hi >= m_max:
+            bs_hi, err_hi = None, float("inf")
+        if bs_hi is not None and err_hi < best_err:
+            best_bs, best_err, best_m = bs_hi, err_hi, m_hi
+        if err_hi <= tol:
+            success = (bs_hi, err_hi, m_hi)
             break
-        m_lo = m_hi
-        m_hi = min(m_hi * 2, m_max)
+        if m_hi >= m_max:
+            break
+        m_lo, m_hi = m_hi, min(m_hi * 2, m_max)
         grown += 1
 
-    if err_hi > tol:
-        # даже m_max не проходит tol -- лучший найденный (максимальный m)
-        return _make_fit(bs_hi, t, err_hi, False, knot_mode, m_hi)
+    if success is None:
+        # tol недостижим при m <= m_max -- лучший найденный результат
+        return _make_fit(best_bs, t, best_err, False, knot_mode, best_m)
 
-    best_bs, best_err, best_m = bs_hi, err_hi, m_hi
+    best_bs, best_err, best_m = success
+    lo_b, hi_b = m_lo, best_m
     for _ in range(max_iter):
-        if m_hi - m_lo <= 1:
+        if hi_b - lo_b <= 1:
             break
-        m_mid = (m_lo + m_hi) // 2
+        m_mid = (lo_b + hi_b) // 2
         try:
             bs_mid, err_mid = build(t, xy, k, m_mid)
         except (ValueError, np.linalg.LinAlgError):
             err_mid = float("inf")
         if err_mid <= tol:
-            m_hi, best_bs, best_err, best_m = m_mid, bs_mid, err_mid, m_mid
+            hi_b, best_bs, best_err, best_m = m_mid, bs_mid, err_mid, m_mid
         else:
-            m_lo = m_mid
+            lo_b = m_mid
     return _make_fit(best_bs, t, best_err, True, knot_mode, best_m)
 
 

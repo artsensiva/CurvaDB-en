@@ -111,15 +111,10 @@ count grows faster than a cubic spline's. On noisy consumer GPS with
 the tolerance.
 
 Along the way we also checked kinematics on synthetic data with known
-velocity and acceleration. The spline estimated velocity better than
-PCHIP interpolation over DP vertices (median error 1.5 m/s vs. 2.3 m/s)
-and didn't produce PCHIP's catastrophic acceleration outliers of up to
-5000 m/s². But a Kalman smoother beat both (1.25 m/s). And detecting
-sharp maneuvers failed for every method: at 5 meters of noise and a
-multi-second step, a 3 m/s² threshold sits right at the noise floor of
-the second derivative. In real telematics, though, maneuvers get
-detected with an accelerometer anyway, and velocity comes from the
-receiver's Doppler measurements rather than differentiating coordinates.
+velocity and acceleration: the spline estimated velocity better than
+interpolation over the DP polyline's vertices, and a Kalman smoother beat
+both. No method could reliably detect sharp maneuvers from coordinates
+alone; details are in the repository.
 
 ## Mistake two: a spline tethered to the polyline
 
@@ -204,7 +199,8 @@ The decisive piece was the oracle table:
 
 A spline that knows the ideal curve takes up about as much space as a
 polyline built from ordinary 1-second samples. No amount of fitter
-improvement or regularization can beat the oracle under these conditions.
+improvement or regularization can beat the oracle under these conditions
+(more on its key limitation below).
 
 ## Mistake three, which we almost missed
 
@@ -264,15 +260,18 @@ industry, not by writing more code.
 **About process.** All the research code was written by the Claude Code
 agent in VS Code, working from short written tasks, while analyzing
 results and hunting for methodological mistakes happened separately, in
-conversation. The agent is good at implementing and running experiments,
-and it honestly records negative results, but it generally doesn't spot
-the flaw in the experiment's setup itself — for instance, it created the
-polyline-tethering behavior itself and then missed it twice. Splitting
-the roles of "executor" and "critic," and keeping task descriptions as
-files in the repo, turned out to matter just as much as which libraries
-we picked.
+conversation. The agent implements specs literally, and it honestly
+records negative results. The polyline tethering wasn't something the
+agent invented on its own — it came straight from the task spec, where
+"keep the error within the segments between samples" was written in as a
+fix for the previous mistake. The critic who wrote that requirement
+noticed its side effect only one step later. The lesson: reviewing the
+task spec, including your own fixes, matters just as much as reviewing
+the code. Keeping specs as files in the repo is what makes that review
+possible.
 
-We consider a negative result reached in a few evenings, rather than
-half a year of product development, a good outcome. The code, every
-table, and the full history of each step are in the
+A negative result reached in a few evenings costs far less than half a
+year spent building a product on an untested hypothesis — which is
+exactly why it was worth getting. The code, every table, and the full
+history of each step are in the
 [repository](https://github.com/artsensiva/CurvaDB-en).

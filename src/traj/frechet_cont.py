@@ -5,20 +5,24 @@ from __future__ import annotations
 import numpy as np
 from numba import njit
 
-_MACHINE_EPS = float(np.finfo(np.float64).eps)
-
 
 @njit(cache=True)
 def _free_interval(ax, ay, bx, by, px, py, eps2):
     """Interval of t in [0,1] with |a + t*(b-a) - p|^2 <= eps2. (lo, hi), lo > hi if empty.
 
-    A point lying exactly on the infinite line through a,b gives a mathematically
-    repeated root (discriminant == 0 exactly). Computing B*B - 4*A*C in floating
-    point can push that residual slightly negative from cancellation alone, which
-    would wrongly report "empty" for a point that's genuinely touching the segment.
-    Clamp discriminant residuals within a `64 * eps_machine` margin (matching the
-    spec's own floating-point rigor convention) to 0 rather than declaring empty --
-    the safe direction for a certified upper bound.
+    Deliberately strict (no discriminant slack): a point exactly on the infinite
+    line through a,b gives a mathematically repeated root (discriminant == 0
+    exactly), and float64 cancellation in B*B - 4*A*C can push that residual
+    slightly negative, reporting "empty" a hair early. An earlier version of this
+    function clamped small negative residuals to feasible to paper over that --
+    which is unsafe: it made decide(eps) return True for eps measurably *below*
+    the true distance at realistic (~1e5 m) coordinate scale, i.e. distance()
+    could underestimate d_F, violating the certificate requirement (spec S1:
+    eps_A >= d_F). Rounding the other way (reporting empty a hair early) only
+    ever makes decide()/distance() report a value >= the true distance -- the
+    safe direction. Any additional slack needed for certificate tightness
+    belongs at the certify.py layer (M1), per the spec's own floating-point
+    rigor convention (docs/specs/00_overview.md section 3.4), not here.
     """
     dx = bx - ax
     dy = by - ay
@@ -30,12 +34,8 @@ def _free_interval(ax, ay, bx, by, px, py, eps2):
     B = 2.0 * (dx * ex + dy * ey)
     C = ex * ex + ey * ey - eps2
     disc = B * B - 4.0 * A * C
-    margin = 64.0 * _MACHINE_EPS * (B * B + abs(4.0 * A * C))
     if disc < 0.0:
-        if disc >= -margin:
-            disc = 0.0
-        else:
-            return (1.0, 0.0)
+        return (1.0, 0.0)
     sq = disc**0.5
     t_lo = (-B - sq) / (2.0 * A)
     t_hi = (-B + sq) / (2.0 * A)

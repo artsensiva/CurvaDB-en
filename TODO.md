@@ -21,3 +21,12 @@ there, in the "Not investigated" section.
   different seeds — running on the full corpus takes longer (~4-15
   minutes per script) if desired, but the conclusions (item 7) are
   robust to sample size (verified at 585/585 for search).
+
+- step7 M0 review (`docs/reviews/step7_M0.md`), finding 4: `decide()` in
+  `src/traj/frechet_cont.py` allocates four `O(n*m)` arrays per call
+  (`left_lo/hi`, `bot_lo/hi`, plus the reachability arrays). Fine for
+  M0/M1's per-track certificate computation, but M3's interval queries
+  call `decide`/`distance` many times per query — worth revisiting then
+  (e.g. a rolling-row `O(n+m)` version, per the design note in
+  `src/traj/frechet_cont.py`'s DP). Not fixed now — no query workload to
+  benchmark against yet.

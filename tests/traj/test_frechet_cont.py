@@ -7,6 +7,7 @@ import numpy as np
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from traj.frechet import distance as discrete_distance
 from traj.frechet_cont import decide, distance
 
 from ._frechet_cont_mpmath import distance_mp
@@ -41,6 +42,17 @@ def _insert_collinear_vertices(P: np.ndarray, rng: np.random.Generator, n_extra:
             out.append(inserts[insert_idx][2])
             insert_idx += 1
         out.append(P[seg + 1])
+    return np.array(out, dtype=np.float64)
+
+
+def _densify(P: np.ndarray, points_per_segment: int) -> np.ndarray:
+    """Resample P with extra exact-linear-interpolation points; same curve, denser."""
+    n = P.shape[0] - 1
+    out = [P[0]]
+    for seg in range(n):
+        for k in range(1, points_per_segment + 1):
+            t = k / points_per_segment
+            out.append(P[seg] + t * (P[seg + 1] - P[seg]))
     return np.array(out, dtype=np.float64)
 
 
@@ -120,13 +132,63 @@ def test_triangle_inequality(P, Q, R):
 def test_reparametrization_invariance(P, n_extra, seed):
     # Mathematically the distance is exactly 0 (the inserted points are exact linear
     # interpolations, so both curves trace the same point set). It can't be asserted
-    # bit-exact: floating-point interpolation isn't bit-exact collinear, leaving ~1e-15
-    # noise that makes decide(P, Q, 0.0) legitimately return False. 1e-9 is tight enough
-    # to catch a broken/missing early-return (which would surface at the ~1e-6 tol scale
-    # or a coordinate-scale error), while tolerating that noise.
+    # bit-exact, or even to a tiny fixed tolerance like 1e-6/1e-9: decide()/distance()
+    # are deliberately strict at the discriminant's Delta~=0 boundary (a point exactly
+    # on a segment's line is a repeated root, and float64 cancellation in B*B-4*A*C can
+    # push the residual a hair negative) -- reporting "not yet feasible" a fraction of
+    # an eps early, never the other way, since that's the only safe direction for a
+    # value used as a certified upper bound (see frechet_cont._free_interval's
+    # docstring; an earlier clamp attempted to "fix" this by widening the discriminant's
+    # feasible region, which instead made distance() UNDERESTIMATE d_F by ~1e-4 at
+    # realistic (~1e5 m) coordinate scale -- unsafe, reverted). An empirical 1000-trial
+    # sweep at this test's coordinate range (+-50) found the resulting conservative
+    # slack up to ~1.5e-6; 1e-4 gives ample margin above that while still catching a
+    # real regression (which would show up at the ~1e-2+ scale, see the GeoLife-scale
+    # variant below for where this slack actually becomes certificate-relevant).
     rng = np.random.default_rng(seed)
     P_reparam = _insert_collinear_vertices(P, rng, n_extra)
-    assert distance(P, P_reparam, tol=1e-9) < 1e-6
+    assert distance(P, P_reparam, tol=1e-6) < 1e-4
+
+
+@given(
+    P=st.lists(
+        st.tuples(
+            st.floats(min_value=-5e4, max_value=5e4, allow_nan=False, allow_infinity=False, width=64),
+            st.floats(min_value=-5e4, max_value=5e4, allow_nan=False, allow_infinity=False, width=64),
+        ),
+        min_size=2,
+        max_size=6,
+    ).map(lambda pts: np.array(pts, dtype=np.float64)),
+    n_extra=st.integers(min_value=1, max_value=4),
+    seed=st.integers(min_value=0, max_value=2**31 - 1),
+)
+@settings(max_examples=30, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+def test_reparametrization_invariance_at_geolife_scale(P, n_extra, seed):
+    """GeoLife's projected coordinates run to ~1e4-1e5 m (traj.io's equirectangular
+    projection around a shared centroid) -- the conservative slack from strict Delta~=0
+    handling scales with coordinate magnitude (an empirical sweep at this scale found
+    up to ~1.5e-3 m), so this needs its own, much larger, tolerance than the small-scale
+    version above. Still well within the spec's own certificate precision (eta=1mm) --
+    exactly the kind of slack M1's certify.py margin (spec section 3.4) must absorb."""
+    rng = np.random.default_rng(seed)
+    P_reparam = _insert_collinear_vertices(P, rng, n_extra)
+    assert distance(P, P_reparam, tol=1e-3) < 1e-2
+
+
+@given(P=_polyline(min_pts=2, max_pts=5), Q=_polyline(min_pts=2, max_pts=5))
+@settings(max_examples=30, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+def test_bounded_above_by_dense_discrete_frechet(P, Q):
+    """Discrete Frechet distance on ANY sampling of two curves is a mathematically
+    guaranteed upper bound on their continuous Frechet distance -- a discrete
+    vertex-to-vertex coupling is a restricted special case of the continuous
+    reparametrization space, so the DP that minimizes over the smaller space can only
+    find a value >= the one minimizing over the larger space. This holds regardless of
+    sampling density, and traj.frechet's Eiter-Mannila DP is a genuinely different
+    algorithm (not sharing this module's free-space-diagram code, unlike the mpmath
+    oracle, which re-derives the same recurrence)."""
+    d_cont = distance(P, Q, tol=1e-6)
+    d_disc = discrete_distance(_densify(P, 25), _densify(Q, 25))
+    assert d_cont <= d_disc + 1e-6
 
 
 @given(P=_polyline(min_pts=2, max_pts=5), Q=_polyline(min_pts=2, max_pts=5))

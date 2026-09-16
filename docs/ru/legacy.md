@@ -1,13 +1,7 @@
-> Archived version of the README from before the project's pivot to
-> trajectory-pivot (a GPS trajectory store on splines with Frechet-based
-> search). The Level 1 code (a Hilbert index over embeddings,
-> `src/level1`) is not touched or extended, but its description is kept
-> here as context.
->
-> Documentation for the old code (`src/level1`, `src/level2`) is
-> Russian-only: [`docs/ru/level1.md`](ru/level1.md),
-> [`docs/ru/level2.md`](ru/level2.md),
-> [`docs/ru/level2_roadmap.md`](ru/level2_roadmap.md).
+> Архивная версия README до перехода проекта на trajectory-pivot
+> (хранилище GPS-траекторий на сплайнах с поиском по Фреше). Код
+> Level 1 (Hilbert-индекс над эмбеддингами, `src/level1`) не трогается
+> и не расширяется, но описание оставлено здесь как контекст.
 
 # CurvaDB - Curve-Based Semantic Search Database
 
@@ -37,8 +31,8 @@ An experimental database that uses mathematical curves and space-filling curve i
 
 ```bash
 # Clone repository
-git clone https://github.com/artsensiva/CurvaDB-en.git
-cd CurvaDB-en
+git clone https://github.com/yourusername/CurvaDB.git
+cd CurvaDB
 
 # Create virtual environment
 python3 -m venv venv
@@ -226,7 +220,7 @@ Inspired by research in:
 ## Contact
 
 For questions, suggestions, or collaboration:
-- GitHub Issues: [Create an issue](https://github.com/artsensiva/CurvaDB-en/issues)
+- GitHub Issues: [Create an issue](https://github.com/yourusername/CurvaDB/issues)
 - Email: your.email@example.com
 
 ---

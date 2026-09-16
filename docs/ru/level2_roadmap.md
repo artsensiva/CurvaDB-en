@@ -382,7 +382,7 @@ def plot_curve_space_tsne(fpca_scores: np.ndarray, labels: List[str]):
 
 ### Day 19-20: Documentation
 
-**File**: `docs/level2.md`
+**File**: `docs/ru/level2.md`
 
 **Sections**:
 1. Overview and motivation

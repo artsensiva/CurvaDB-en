@@ -20,3 +20,11 @@ or extended.
 - Commit after each completed item. Record anything unfinished in
   TODO.md.
 - A negative benchmark result is a normal result — don't force it.
+
+## Current work (roadmap)
+- The roadmap is docs/ROADMAP.md; specs are in docs/specs/ (written in Russian).
+- "Репозиторий CurvaDB" in specs step7 and step8 means this repository.
+- Code, comments and reports are written in English.
+- One active phase branch at a time (step7, step8, core-extract); merge to main only after the gate in docs/ROADMAP.md is checked.
+- Acceptance sections in docs/specs/ must never be edited during a phase.
+- Products P1-P4 are NOT implemented in this repository; they get their own repositories when their gates open.

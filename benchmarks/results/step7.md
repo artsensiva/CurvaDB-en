@@ -149,3 +149,20 @@ spec's own fallback clause, interval-arithmetic spot-checks (needed starting M1'
 per `docs/specs/00_overview.md` section 3.4) will use `mpmath.iv` instead. Not needed for M0
 itself -- `hypothesis` (6.168.0) and `mpmath` (1.4.1) were added to `requirements-research.txt`
 and are sufficient for this milestone's property tests and oracle.
+
+## M1 -- polyline and linearization certificates
+
+Corpus: `load_clean_tracks(n=200, seed=42)` -> 585 cleaned track segments from 200 raw tracks (the project's standard corpus, per `traj.io.DEFAULT_N_TRACKS`).
+
+| Criterion | Threshold | Actual | Passed |
+|---|---|---|---|
+| S1: polyline certificates (`certify_polyline`, eta=1e-06) vs. mpmath reference (per piece, dps=40, tol=1e-06) | `eps_A >= reference - 1e-06` for 100% of tracks | 585/585 (worst margin -5.000e-07) | yes |
+| S2: spline certificates via certified linearization (`certify_spline_linearization`, lam=0.1, eta=0.001) vs. near-exact reference (lam=0.0001) | `eps_A >= reference - 0.0001`, `eps_A` finite, for 100% of tracks with an available reference | 539/585 (46 fallback [uncertified linearization at lam=0.1], 0 reference-unavailable) | yes |
+
+**Informational (not a gate):** median `eps_A/LB` for polylines (LB = directed Hausdorff distance both ways, spec section 2.5) = **1.000** -- a preliminary reading of spec S3's density criterion (median <= 1.2 for polylines) for gate G1; S3 itself is not an M1 gate and is not enforced here.
+
+**S2 pilot** (first 40 tracks, measured separately before the full run): 383.3s wall time, peak Python-tracked memory 236.5 MB (`tracemalloc`). Linear extrapolation to the full 585-track corpus predicted ~5605s; the actual full run took **2217.6s** (~37 minutes) -- the pilot's first-40 tracks were evidently not representative of the corpus average (front-loaded by some slower/larger tracks), so the projection overestimated by ~2.5x. Noted for future pilots: track order isn't a reliable proxy for per-track cost here: consider a random subsample for timing estimates instead of a fixed prefix.
+
+**Fallback / reference-unavailable tracks are a real, expected outcome** (spec section 10's acknowledged risk: spline loops relative to a chord break the monotonicity test at any subdivision depth) -- not a bug. `certify_spline_linearization` returns `(inf, False)` for these (item 0.4), and they are excluded from the S2 pass/fail count, not silently treated as passes.
+
+`decide()`/`decide_conservative()`'s rolling-row kernels (item 4) were exercised transparently wherever a track's `n * m` (original vs. linearized-spline segment count) exceeded 5,000,000 during S2 -- no separate accounting needed, both code paths are verified equivalent (`test_rolling_dp_matches_full_dp`).

@@ -39,15 +39,17 @@ section reports metric-correctness test results instead.
 | Triangle inequality | `d_F(P,R) <= d_F(P,Q)+d_F(Q,R)+1e-9`, 100 random triples | 100/100 | yes |
 | Reparametrization invariance (coords +-50) | inserting exact-collinear vertices leaves `d_F` < 1e-4 (see M0.1), 100 random cases | 100/100 | yes |
 | Reparametrization invariance (GeoLife scale, +-5e4) | same, `d_F` < 1e-2, 30 random cases | 30/30 | yes |
-| Bounded above by dense discrete Frechet (independent algorithm) | `d_F <= discrete_Frechet(densify(P,25), densify(Q,25)) + 1e-6`, 30 random cases | 30/30 | yes |
+| Independent bracket via discrete Frechet (two-sided, replaces round-1's one-sided check) | `distance_upper <= discrete_Frechet(resample(P,h), resample(Q,h)) + 4e-7*size` and `discrete_Frechet(...) - h <= distance + 1e-9`, `h = 0.5%` of curve bbox diagonal, 30 random cases | 30/30 | yes |
 | Cross-check vs. mpmath oracle (independent implementation) | `\|distance - distance_mp\| < 1e-5`, small polylines (n,m<=6) | worst deviation 9.97e-10 over 60+20 cases | yes |
+| `distance_upper` vs. mpmath oracle at GeoLife scale (closed-form translation, offset 1e4-1e5m, true distance 1e-3 to 10m) | `distance_upper >= distance_mp - 1e-9`, 30 random cases | 30/30 | yes |
+| `distance_upper` no-floor regression guard (GeoLife scale, deterministic) | 5m-segment curve, offset 1e5m, true distance 1e-3m: `distance_upper - distance_mp <= 1e-6` | `9.5e-10` | yes |
 | eps-monotonicity (defensive, not in spec) | `decide` results non-decreasing in `eps`, 100 random cases | 100/100 | yes |
 | n=1 special case (segment vs. polyline) | O(m) path shares code with general algorithm, no divergence | exact match (distance 1.0 on hand-computed example) | yes |
 | Duplicate consecutive vertex | zero-length segment doesn't crash, distance matches de-duplicated polyline | matches (diff < 1e-6) | yes |
 
-`venv/bin/pytest tests/traj/test_frechet_cont.py -v`: 13/13 passed, ~2.5-3.5s (numba JIT warm-up
-included), stable across repeated runs (checked 4x with a cleared hypothesis example cache). Full
-`tests/traj/` suite: 31/31 passed, no regressions in the existing `frechet.py`, `spline.py`,
+`venv/bin/pytest tests/traj/test_frechet_cont.py -v`: 15/15 passed, ~2.6-3.5s (numba JIT warm-up
+included), stable across repeated runs (checked 5x with a cleared hypothesis example cache). Full
+`tests/traj/` suite: 33/33 passed, no regressions in the existing `frechet.py`, `spline.py`,
 `spline_lsq.py` tests.
 
 ### M0.1 -- review fixes (`docs/reviews/step7_M0.md`)
@@ -77,6 +79,42 @@ The GeoLife-scale figure is close to the spec's own certificate precision conven
 (`eta = 1mm`, section 2.2) -- exactly the kind of slack M1's `certify.py` margin
 (`delta = 64 * eps_machine * L`, section 3.4) needs to absorb, confirming that margin belongs at
 the certificate layer, not inside this raw metric.
+
+### M0.1 (round 2) -- `decide_conservative` / `distance_upper`, and a second review correction
+
+Round 1 ended by observing that certificate margins belong at the `certify.py` layer (M1), not in
+`frechet_cont.py`. This round builds exactly that layer -- but a first attempt at it repeated a
+version of round 1's own mistake, caught by a second review correction before it was ever
+committed as final: the margin was computed from `P`/`Q`'s **overall coordinate magnitude**
+(~1e5 m at GeoLife scale), giving a **~6-12mm floor** regardless of how small the true distance
+was. That is wrong on principle -- Frechet distance is translation-invariant, so no precision
+floor should depend on an arbitrary absolute coordinate offset (GeoLife's shared projection
+centroid is not a physically meaningful reference point). Fixed before implementation, two ways:
+
+1. `decide()`, `decide_conservative()`, and `distance_upper()` all subtract a common origin
+   (`P[0]`) from `P` and `Q` before any computation, so every coordinate the DP ever sees is local
+   (small) regardless of the curve's absolute position in the world.
+2. `decide_conservative`'s margin is computed **per point-vs-segment cell**, from that cell's own
+   local geometry -- `margin = 64 * eps_machine * (|a-p| + |b-a| + eps)^2` -- not a single global
+   `scale`.
+
+**Actual margin order after the fix** (measured, not the earlier "6-12mm floor" estimate): at
+realistic local scale (segment lengths / point offsets of 1-500m after recentering), the resulting
+`eps` slack is **~2.4e-7 m per meter of local scale** (empirically stable across 6 orders of
+magnitude of test geometry, `1.0` to `141` m). Concretely: for the exact scenario the correction
+specified -- a 5m-segment curve, offset by 1e5m, true distance exactly 1e-3m --
+`distance_upper - distance_mp = 9.5e-10` m, i.e. sub-nanometer, nowhere near even one micron, let
+alone a millimeter. `decide_conservative` does carry an intrinsic floor proportional to local
+scale even for an exactly-zero true distance (it requires genuine clearance beyond `eps` itself,
+so `eps=0` can never clear it) -- but that floor is the same `~2.4e-7 * scale` order, sub-micron
+for any realistic single-segment GPS geometry.
+
+New functions (both in `src/traj/frechet_cont.py`, `decide()`/`distance()`'s external contract
+unchanged): `decide_conservative(P, Q, eps)` -- stricter than `decide()`, via the local margin
+above; `distance_upper(P, Q, tol=1e-6)` -- bisects via `distance()`, then verifies the result
+against `decide_conservative`, growing further if needed. **`distance_upper` is what M1's
+`certify.py` should use for certificates** -- it's independently re-verified, not just relying on
+`decide()` rounding the safe way on average.
 
 ### Stack decision recorded (spec section 6)
 

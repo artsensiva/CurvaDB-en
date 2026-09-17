@@ -32,9 +32,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tests", "traj"))
 sys.path.insert(0, os.path.dirname(__file__))
 
+from traj.bezier import bezier_segments, de_casteljau_split, derivative_control_points  # noqa: E402
 from traj.certify import certified_linearize, certify_polyline, certify_spline_linearization, hausdorff_lower_bound  # noqa: E402
 from traj.clean import load_clean_tracks  # noqa: E402
-from traj.frechet_cont import distance_upper  # noqa: E402
+from traj.frechet_cont import _ROLLING_THRESHOLD, distance_upper  # noqa: E402
 from traj.simplify import simplify_sed_with_indices  # noqa: E402
 from traj.spline_lsq import fit_adaptive  # noqa: E402
 from _frechet_cont_mpmath import distance_mp  # noqa: E402
@@ -66,6 +67,147 @@ SECTION_HEADER = "## M1 -- polyline and linearization certificates"
 def _bspline_from_fit(fit) -> BSpline:
     knots, c_list, k = fit.tck
     return BSpline(knots, np.column_stack(c_list), k)
+
+
+# --- M1.1 diagnostics (docs/reviews/step7_M1.md item 0) ---------------------------
+#
+# Frozen snapshot of the PRE-M1.1 certification algorithm (blind t=0.5 bisection,
+# no root-splitting, no small-ball rule) -- deliberately NOT importing certify.py's
+# private functions, since those are rewritten by M1.1. This copy exists solely to
+# diagnose the old algorithm's failure mode on real tracks before the fix, and is
+# not maintained afterward.
+
+
+def _old_tube_and_monotone_ok(control_points: np.ndarray, radius: float) -> tuple[bool, bool]:
+    """Returns (tube_ok, monotone_ok) separately (the M1 version only returned
+    their conjunction) -- needed to diagnose which check is the actual blocker."""
+    a, b = control_points[0], control_points[-1]
+    chord_vec = b - a
+    chord_len = float(np.hypot(*chord_vec))
+    if chord_len < 1e-12:
+        tube_ok = bool(np.all(np.hypot(*(control_points - a).T) <= radius))
+        return tube_ok, True
+    e = chord_vec / chord_len
+    tube_ok = True
+    for p in control_points:
+        d = b - a
+        len2 = float(d @ d)
+        tt = np.clip(float((p - a) @ d) / len2, 0.0, 1.0)
+        closest = a + tt * d
+        if float(np.hypot(*(p - closest))) > radius:
+            tube_ok = False
+            break
+    deriv = derivative_control_points(control_points)
+    monotone_ok = bool(np.all(deriv @ e >= -1e-9 * max(chord_len, 1.0)))
+    return tube_ok, monotone_ok
+
+
+def _old_certify_segment_diag(seg, lam, levels_left, t_lo, t_hi, depth, state) -> bool:
+    tube_ok, monotone_ok = _old_tube_and_monotone_ok(seg, lam)
+    state["max_depth"] = max(state["max_depth"], depth)
+    if tube_ok and monotone_ok:
+        return True
+    if levels_left == 0:
+        if state["first_failure"] is None:
+            a, b = seg[0], seg[-1]
+            chord_len = float(np.hypot(*(b - a)))
+            time_span = t_hi - t_lo
+            reason = "+".join(([] if tube_ok else ["tube"]) + ([] if monotone_ok else ["monotonicity"]))
+            state["first_failure"] = {
+                "reason": reason,
+                "chord_len": chord_len,
+                "avg_speed": chord_len / time_span if time_span > 0 else float("nan"),
+            }
+        return False
+    left, right = de_casteljau_split(seg, 0.5)
+    t_mid = 0.5 * (t_lo + t_hi)
+    ok_left = _old_certify_segment_diag(left, lam, levels_left - 1, t_lo, t_mid, depth + 1, state)
+    ok_right = _old_certify_segment_diag(right, lam, levels_left - 1, t_mid, t_hi, depth + 1, state)
+    return ok_left and ok_right
+
+
+def _old_certified_linearize_diag(bs: BSpline, lam: float, max_levels: int) -> dict:
+    segments = bezier_segments(bs)
+    t = np.asarray(bs.t, dtype=float)
+    k = bs.k
+    interior = np.unique(t[k + 1 : len(t) - k - 1])
+    breaks = np.concatenate([[t[k]], interior, [t[-k - 1]]])
+    state = {"max_depth": 0, "first_failure": None}
+    fully_certified = True
+    for j, seg in enumerate(segments):
+        ok = _old_certify_segment_diag(seg, lam, max_levels, breaks[j], breaks[j + 1], 0, state)
+        fully_certified = fully_certified and ok
+    return {"fully_certified": fully_certified, **state}
+
+
+def diagnose_pre_fix(tracks) -> dict:
+    """Item 0: eps_A/LB distribution for polylines (S1, fast, no mpmath needed),
+    per-failing-track tube-vs-monotonicity diagnosis + max recursion depth (S2,
+    old algorithm), and rolling-DP usage count. Run BEFORE any certify.py changes."""
+    print("\n=== M1.1 diagnostics (pre-fix) ===", flush=True)
+
+    ratios = []
+    for tr in tracks:
+        _, kept = simplify_sed_with_indices(tr, tol=DP_SED_TOL)
+        if len(kept) < 2:
+            continue
+        eps_A = certify_polyline(tr.xy, kept, eta=S1_ETA)
+        lb = hausdorff_lower_bound(tr.xy, tr.xy[kept])
+        if lb > 1e-9:
+            ratios.append(eps_A / lb)
+    ratios = np.array(ratios)
+    eps_lb = {
+        "p50": float(np.percentile(ratios, 50)),
+        "p90": float(np.percentile(ratios, 90)),
+        "p99": float(np.percentile(ratios, 99)),
+        "max": float(np.max(ratios)),
+        "frac_exactly_1": float(np.mean(np.isclose(ratios, 1.0, atol=1e-9))),
+        "n": len(ratios),
+    }
+    print(f"  eps_A/LB: p50={eps_lb['p50']:.4f} p90={eps_lb['p90']:.4f} p99={eps_lb['p99']:.4f} "
+          f"max={eps_lb['max']:.4f} frac==1.0={eps_lb['frac_exactly_1']:.3f} (n={eps_lb['n']})", flush=True)
+
+    failing_indices = []
+    failure_details = []
+    depths_all = []
+    n_rolling = 0
+    for idx, tr in enumerate(tracks):
+        try:
+            fit = fit_adaptive(tr, tol=S2_FIT_TOL)
+            bs = _bspline_from_fit(fit)
+        except (ValueError, np.linalg.LinAlgError):
+            continue
+        diag = _old_certified_linearize_diag(bs, S2_LAM, S2_MAX_LEVELS)
+        depths_all.append(diag["max_depth"])
+        if not diag["fully_certified"]:
+            failing_indices.append(idx)
+            failure_details.append(diag["first_failure"])
+
+        # rolling-DP usage: the certificate's own distance_upper(A, lin_vertices) call
+        lin_vertices, _ = certified_linearize(bs, S2_LAM, max_levels=S2_MAX_LEVELS)
+        if (len(tr.xy) - 1) * (len(lin_vertices) - 1) > _ROLLING_THRESHOLD:
+            n_rolling += 1
+
+    reasons = [d["reason"] for d in failure_details]
+    chord_lens = [d["chord_len"] for d in failure_details]
+    speeds = [d["avg_speed"] for d in failure_details if not np.isnan(d["avg_speed"])]
+    print(f"  {len(failing_indices)} failing tracks (of {len(tracks)}); failure reasons: "
+          f"{ {r: reasons.count(r) for r in set(reasons)} }", flush=True)
+    print(f"  failing-leaf chord length: mean={np.mean(chord_lens):.4g} max={np.max(chord_lens):.4g}", flush=True)
+    if speeds:
+        print(f"  failing-leaf avg speed: mean={np.mean(speeds):.4g} max={np.max(speeds):.4g} m/s", flush=True)
+    print(f"  max recursion depth (old algorithm): mean={np.mean(depths_all):.2f} max={np.max(depths_all)}", flush=True)
+    print(f"  tracks exceeding rolling-DP threshold (n*m > {_ROLLING_THRESHOLD}): {n_rolling}/{len(tracks)}", flush=True)
+
+    return {
+        "eps_lb": eps_lb,
+        "failing_indices": failing_indices,
+        "failure_reasons": reasons,
+        "chord_lens": chord_lens,
+        "speeds": speeds,
+        "depths_old": depths_all,
+        "n_rolling": n_rolling,
+    }
 
 
 def run_s1(tracks) -> dict:
@@ -234,5 +376,18 @@ def main() -> None:
     print(f"\nwrote {OUT_MD}", flush=True)
 
 
+def main_diagnose_only() -> dict:
+    """M1.1 item 0: run just the pre-fix diagnostics (no mpmath, no full S1/S2) --
+    used once before touching certify.py, and its output is folded into the M1.1
+    report update by hand afterward."""
+    print("Loading and cleaning tracks...", flush=True)
+    tracks, clean_stats = load_clean_tracks(n=N_TRACKS, seed=SEED)
+    print(f"{len(tracks)} cleaned track segments from {clean_stats.n_tracks_in} raw tracks.", flush=True)
+    return diagnose_pre_fix(tracks)
+
+
 if __name__ == "__main__":
-    main()
+    if "--diagnose" in sys.argv:
+        main_diagnose_only()
+    else:
+        main()

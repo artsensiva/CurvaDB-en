@@ -52,4 +52,5 @@ Commits, reports (`benchmarks/results/step7.md`), reviews (`docs/reviews/`), oth
 | [0009](ADR-0009-mpmath-iv-instead-of-flint.md) | `mpmath.iv` instead of `python-flint` | Accepted |
 | [0010](ADR-0010-invalid-fit-category.md) | "Invalid fit" category for S2, with a fixed validity threshold | Accepted |
 | [0011](ADR-0011-fitter-choice-for-s2.md) | Spline fitter choice for S2 (`fit_adaptive` vs. `fit_uniform`) | Accepted |
-| [0012](ADR-0012-s2-invalid-fit-threshold-sensitivity.md) | S2 invalid-fit rate is a fitter property, not a threshold-calibration artifact | Accepted |
+| [0012](ADR-0012-s2-invalid-fit-threshold-sensitivity.md) | S2 invalid-fit rate is a fitter property, not a threshold-calibration artifact | Superseded by ADR-0014 |
+| [0014](ADR-0014-dense-error-domain-bug.md) | `dense_max_error`'s parametrization-domain bug (ADR-0010/ADR-0012's numbers invalid) | Accepted |

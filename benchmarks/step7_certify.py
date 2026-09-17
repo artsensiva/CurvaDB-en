@@ -51,7 +51,10 @@ S1_REF_TOL = 1e-6
 S1_REF_DPS = 40
 S1_SLACK = 1e-6
 
-S2_FIT_TOL = 5.0
+S2_FIT_TOL = 10.0  # ADR-0013: one shared tol for all S2 fitters, matching step1's spline.fit()
+                    # tol on these exact 585 tracks -- NOT the same quantity per fitter (see
+                    # ADR-0013: fit_adaptive/fit_uniform's own max_error is the residual AT the
+                    # samples, spline.fit()'s is the dense-grid deviation FROM the polyline).
 S2_LAM = 0.1
 S2_ETA = 1e-3
 S2_MAX_LEVELS = 12
@@ -75,22 +78,35 @@ def _bspline_from_fit(fit) -> BSpline:
 
 
 def fit_validity(
-    track, fit, deviation_factor: float = S2_VALIDITY_DEVIATION_FACTOR, control_bound_factor: float = S2_VALIDITY_CONTROL_BOUND_FACTOR
+    track,
+    fit,
+    deviation_factor: float = S2_VALIDITY_DEVIATION_FACTOR,
+    control_bound_factor: float = S2_VALIDITY_CONTROL_BOUND_FACTOR,
+    dense_mode: str = "raw",
 ) -> tuple[bool, str | None]:
     """ADR-0010: a fit is invalid (excluded from S2's pass/fallback counts
     entirely) if EITHER fixed condition fails:
       1. dense-grid deviation from the track (traj.spline.dense_max_error's
-         existing point-to-segment-on-a-dense-grid methodology, mode="time")
-         exceeds deviation_factor * the fitter's own tol;
+         existing point-to-segment-on-a-dense-grid methodology) exceeds
+         deviation_factor * S2_FIT_TOL;
       2. any control point is more than control_bound_factor bbox diagonals
          of the track away from the track's own first point.
     Defaults are ADR-0010's fixed-before-the-run thresholds; not adjusted
-    after seeing results. The two parameters exist only so ADR-0012's
-    side-by-side alternative-threshold comparison can reuse this same
-    function without duplicating it -- the DEFAULT behavior (and everything
-    in the M1 report's primary table) always uses ADR-0010's own values.
+    after seeing results. The two _factor parameters exist only so
+    ADR-0012's side-by-side alternative-threshold comparison can reuse this
+    same function without duplicating it -- the DEFAULT behavior (and
+    everything in the M1 report's primary table) always uses ADR-0010's own
+    values.
+
+    dense_mode MUST match the fitter's own tck convention (ADR-0014):
+    "raw" for spline_lsq.py's fit_adaptive/fit_uniform (real-time-domain
+    knots), "time" for spline.py's fit() (normalized-u knots). Passing the
+    wrong one raises ValueError (traj.spline._check_tck_domain) rather than
+    silently measuring the wrong thing -- this is the bug ADR-0014 found
+    and fixed; the default here ("raw") matches this module's current
+    default fitter, fit_adaptive.
     """
-    dev = dense_max_error(track.t, track.xy, fit.tck, mode="time")
+    dev = dense_max_error(track.t, track.xy, fit.tck, mode=dense_mode)
     if dev > deviation_factor * S2_FIT_TOL:
         return False, "dense_deviation"
 
@@ -305,6 +321,7 @@ def run_s2(
     fitter=fit_adaptive,
     deviation_factor: float = S2_VALIDITY_DEVIATION_FACTOR,
     control_bound_factor: float = S2_VALIDITY_CONTROL_BOUND_FACTOR,
+    dense_mode: str = "raw",
 ) -> dict:
     n_pass = 0
     n_fallback = 0  # eps_A == inf at the certificate's own lam (or the fit itself raised)
@@ -314,6 +331,7 @@ def run_s2(
     invalid_reasons: list[str] = []
     dense_deviations: list[float] = []  # every successfully-fitted track, valid or not --
     control_ratios: list[float] = []    # lets us re-derive alternate thresholds without re-fitting
+    eps_A_values: list[float] = []      # ADR-0013/M1.3: eps_A for PASSING tracks only
     n_total = 0
     t0 = time.time()
     for idx, tr in enumerate(tracks):
@@ -326,14 +344,16 @@ def run_s2(
             n_fallback += 1
             continue
 
-        dev = dense_max_error(tr.t, tr.xy, fit.tck, mode="time")
+        dev = dense_max_error(tr.t, tr.xy, fit.tck, mode=dense_mode)
         dense_deviations.append(dev)
         _, c_list, _ = fit.tck
         c = np.column_stack(c_list)
         bbox_diag = _bbox_diagonal(tr.xy)
         control_ratios.append(float(np.max(np.hypot(*(c - tr.xy[0]).T))) / max(bbox_diag, 1e-9))
 
-        valid, reason = fit_validity(tr, fit, deviation_factor=deviation_factor, control_bound_factor=control_bound_factor)
+        valid, reason = fit_validity(
+            tr, fit, deviation_factor=deviation_factor, control_bound_factor=control_bound_factor, dense_mode=dense_mode
+        )
         if not valid:
             n_invalid_fit += 1
             invalid_reasons.append(reason)
@@ -352,6 +372,7 @@ def run_s2(
         reference = distance_upper(tr.xy, ref_vertices, tol=1e-6)
         if eps_A >= reference - S2_REF_SLACK:
             n_pass += 1
+            eps_A_values.append(eps_A)
 
         if (idx + 1) % 20 == 0:
             print(f"  S2 ({label}): {idx + 1}/{len(tracks)} tracks, elapsed {time.time() - t0:.1f}s", flush=True)
@@ -365,6 +386,7 @@ def run_s2(
         "invalid_reasons": invalid_reasons,
         "dense_deviations": dense_deviations,
         "control_ratios": control_ratios,
+        "eps_A_values": eps_A_values,
         "n_total": n_total,
         "elapsed": time.time() - t0,
     }

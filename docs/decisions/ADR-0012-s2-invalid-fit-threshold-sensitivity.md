@@ -1,7 +1,16 @@
 # ADR-0012: S2 invalid-fit rate is a fitter property, not a threshold-calibration artifact
 
-- Status: Accepted
+- Status: Superseded by ADR-0014
 - Date: 2026-09-17
+
+**Superseded (M1.3):** this ADR's entire sensitivity analysis was computed from
+`fit_validity()`'s dense-deviation measurement, which ADR-0014 found to be buggy for
+`spline_lsq.py` fits (wrong parametrization domain -- deviations off by orders of magnitude,
+inconsistently in either direction). The conclusion below ("not a calibration artifact, a
+structural property") is therefore unsound as stated -- it was built on broken numbers, not a
+merely-conservative reading of good ones. See ADR-0014 for the bug and corrected full-corpus
+numbers, and ADR-0013 for the resulting fitter comparison. Kept here, unedited below, as the
+record of what was believed and why -- not deleted.
 
 ## Context
 

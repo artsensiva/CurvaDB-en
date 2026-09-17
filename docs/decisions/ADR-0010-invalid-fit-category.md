@@ -63,7 +63,18 @@ separate bucket.
 - Actual counts from the full 585-track run: see `benchmarks/results/step7.md`'s M1 section
   (filled in after the run this ADR's decision governs).
 
+**Update (M1.3, ADR-0014):** the dense-grid deviation check's implementation
+(`benchmarks/step7_certify.py`'s `fit_validity()`) had a parametrization-domain bug when applied
+to `spline_lsq.py` fits -- it evaluated the spline at the wrong part of its domain, inflating (or
+occasionally deflating) the measured deviation by orders of magnitude. **This ADR's own decision
+(the two-condition validity check, and its `10x`/`100x` multiplier thresholds) is unaffected and
+unchanged** -- the bug was in the measurement feeding condition 1, not in the check's design. But
+the *specific counts this ADR reported* (93.8% invalid on the full corpus) are unreliable as
+measurements; see ADR-0014 for the bug, the fix, and corrected numbers.
+
 ## Links
 
-`docs/reviews/step7_M1.md`; `benchmarks/results/step7.md` (M1.1 and M1.2 sections);
-`src/traj/spline.py`'s `dense_max_error`; ADR-0008; ADR-0011 (fitter choice, same investigation).
+`docs/reviews/step7_M1.md`; `docs/reviews/step7_M1_2.md`; `benchmarks/results/step7.md` (M1.1,
+M1.2 and M1.3 sections); `src/traj/spline.py`'s `dense_max_error`; ADR-0008; ADR-0011 (fitter
+choice, same investigation); ADR-0014 (the measurement bug affecting this ADR's reported
+numbers).

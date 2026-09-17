@@ -74,6 +74,53 @@ def bezier_segments(bs: BSpline) -> list[np.ndarray]:
     return [c[j * k : j * k + k + 1].copy() for j in range(m + 1)]
 
 
+def _raise_multiplicity(t: np.ndarray, c: np.ndarray, k: int, u_bar: float, target: int) -> tuple[np.ndarray, np.ndarray]:
+    """Inserts u_bar (exact float equality tracking -- insert_knot's returned knot
+    vector always contains u_bar bit-for-bit, so repeated calls accumulate multiplicity
+    correctly) until it has multiplicity target, whatever its starting multiplicity."""
+    mult = int(np.sum(t == u_bar))
+    for _ in range(target - mult):
+        t, c = insert_knot(t, c, k, u_bar)
+    return t, c
+
+
+def bezier_segments_in_range(bs: BSpline, u_lo: float, u_hi: float) -> list[np.ndarray]:
+    """Like bezier_segments, but restricted to [u_lo, u_hi] (spec section 2.3, M2's
+    per-original-vertex pieces) -- u_lo/u_hi need not be existing knots. Raises both to
+    full clamped multiplicity k+1 (the standard Bezier-extraction technique: treating
+    them as fresh clamped sub-domain boundaries doesn't change the curve's values, only
+    the knot vector's redundancy) and every interior knot strictly between them to
+    multiplicity k, then slices the control points between u_lo's and u_hi's first
+    occurrences into m+1 segments of k+1 points each. Verified against dense sampling
+    (max error ~1e-15) for arbitrary, knot-aligned, and full-range [u_lo, u_hi].
+
+    Requires u_hi > u_lo (a zero-width piece has no Bezier segment to extract -- callers
+    with u_k == u_{k+1}, spec section 2.3's degenerate case, must special-case it
+    themselves, matching a point-vs-segment formula rather than a curve-vs-segment one).
+    """
+    if u_hi <= u_lo:
+        raise ValueError(f"bezier_segments_in_range requires u_hi > u_lo, got {u_lo=} {u_hi=}")
+
+    t = np.asarray(bs.t, dtype=float)
+    c = np.asarray(bs.c, dtype=float)
+    k = bs.k
+
+    t, c = _raise_multiplicity(t, c, k, u_lo, k + 1)
+    t, c = _raise_multiplicity(t, c, k, u_hi, k + 1)
+
+    n_knots = len(t)
+    interior_all = t[k + 1 : n_knots - k - 1]
+    between = np.unique(interior_all[(interior_all > u_lo) & (interior_all < u_hi)])
+    for u in between:
+        t, c = _raise_multiplicity(t, c, k, float(u), k)
+
+    lo_first = int(np.searchsorted(t, u_lo, side="left"))
+    hi_first = int(np.searchsorted(t, u_hi, side="left"))
+    seg_c = c[lo_first : hi_first + 1]
+    m_plus_1 = (len(seg_c) - 1) // k
+    return [seg_c[j * k : j * k + k + 1].copy() for j in range(m_plus_1)]
+
+
 def de_casteljau_split(P: np.ndarray, t: float = 0.5) -> tuple[np.ndarray, np.ndarray]:
     """Splits a single Bezier segment (control points P, shape (p+1, dim)) at
     parameter t into (left, right) child segments, each shape (p+1, dim)."""

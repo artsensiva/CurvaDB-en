@@ -4,11 +4,19 @@ section 9: knot insertion and Bezier extraction must not change the curve."""
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from scipy.interpolate import BSpline
 
-from traj.bezier import bezier_segments, de_casteljau_split, derivative_control_points, evaluate_bezier, insert_knot
+from traj.bezier import (
+    bezier_segments,
+    bezier_segments_in_range,
+    de_casteljau_split,
+    derivative_control_points,
+    evaluate_bezier,
+    insert_knot,
+)
 
 
 def _random_bspline(rng: np.random.Generator, k: int = 3, n_interior: int = 4, n_ctrl_extra: int = 0):
@@ -117,6 +125,63 @@ def test_derivative_control_points_match_scipy(bs):
             v_bez = evaluate_bezier(dseg, tt) / (u1 - u0)
             max_diff = max(max_diff, float(np.max(np.abs(v_scipy - v_bez))))
     assert max_diff <= 1e-9 * L
+
+
+@given(
+    bs=_bspline_strategy,
+    lo_frac=st.floats(min_value=0.0, max_value=0.9, allow_nan=False),
+    span_frac=st.floats(min_value=0.01, max_value=1.0, allow_nan=False),
+)
+@_settings
+def test_bezier_segments_in_range_preserves_curve(bs, lo_frac, span_frac):
+    """spec section 9 (M2): restricting bezier_segments to an arbitrary [u_lo, u_hi]
+    (not necessarily knot-aligned) must reproduce the same curve, dense-sampled,
+    as evaluating bs directly."""
+    domain_lo, domain_hi = float(bs.t[bs.k]), float(bs.t[-bs.k - 1])
+    span = domain_hi - domain_lo
+    u_lo = domain_lo + lo_frac * span
+    u_hi = min(u_lo + span_frac * span * (1.0 - lo_frac), domain_hi)
+    if u_hi <= u_lo:
+        return
+
+    segments = bezier_segments_in_range(bs, u_lo, u_hi)
+
+    t_after = np.asarray(bs.t, dtype=float)
+    interior_between = np.unique(t_after[(t_after > u_lo) & (t_after < u_hi)])
+    breaks = np.concatenate([[u_lo], interior_between, [u_hi]])
+    assert len(segments) == len(breaks) - 1
+
+    L = max(float(np.max(np.abs(bs.c))), 1.0)
+    max_diff = 0.0
+    for j, seg in enumerate(segments):
+        u0, u1 = breaks[j], breaks[j + 1]
+        if u1 <= u0:
+            continue
+        for tt in np.linspace(0.0, 1.0, 11):
+            u = u0 + tt * (u1 - u0)
+            v_bs = bs(u)
+            v_bez = evaluate_bezier(seg, tt)
+            max_diff = max(max_diff, float(np.max(np.abs(v_bs - v_bez))))
+    assert max_diff <= 1e-9 * L
+
+
+def test_bezier_segments_in_range_full_domain_matches_bezier_segments():
+    rng = np.random.default_rng(7)
+    bs = _random_bspline(rng, n_interior=4)
+    domain_lo, domain_hi = float(bs.t[bs.k]), float(bs.t[-bs.k - 1])
+    a = bezier_segments_in_range(bs, domain_lo, domain_hi)
+    b = bezier_segments(bs)
+    assert len(a) == len(b)
+    for sa, sb in zip(a, b):
+        assert np.allclose(sa, sb)
+
+
+def test_bezier_segments_in_range_rejects_zero_width():
+    rng = np.random.default_rng(3)
+    bs = _random_bspline(rng, n_interior=2)
+    u = 0.5 * (float(bs.t[bs.k]) + float(bs.t[-bs.k - 1]))
+    with pytest.raises(ValueError):
+        bezier_segments_in_range(bs, u, u)
 
 
 def test_insert_knot_raises_multiplicity():

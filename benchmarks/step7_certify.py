@@ -33,11 +33,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tests", "traj"
 sys.path.insert(0, os.path.dirname(__file__))
 
 from traj.bezier import bezier_segments, de_casteljau_split, derivative_control_points  # noqa: E402
-from traj.certify import certified_linearize, certify_polyline, certify_spline_linearization, hausdorff_lower_bound  # noqa: E402
+from traj.certify import _bbox_diagonal, certified_linearize, certify_polyline, certify_spline_linearization, hausdorff_lower_bound  # noqa: E402
 from traj.clean import load_clean_tracks  # noqa: E402
 from traj.frechet_cont import _ROLLING_THRESHOLD, distance_upper  # noqa: E402
 from traj.simplify import simplify_sed_with_indices  # noqa: E402
-from traj.spline_lsq import fit_adaptive  # noqa: E402
+from traj.spline import dense_max_error  # noqa: E402
+from traj.spline_lsq import fit_adaptive, fit_uniform  # noqa: E402
 from _frechet_cont_mpmath import distance_mp  # noqa: E402
 from _report_utils import upsert_section  # noqa: E402
 
@@ -59,6 +60,10 @@ S2_REFERENCE_LAM = 1e-4
 S2_REF_SLACK = 1e-4
 S2_PILOT_N = 40
 
+# ADR-0010: fixed BEFORE the full-corpus run, not adjusted after seeing results.
+S2_VALIDITY_DEVIATION_FACTOR = 10.0  # dense-grid deviation must be <= this * S2_FIT_TOL
+S2_VALIDITY_CONTROL_BOUND_FACTOR = 100.0  # control points within this * track bbox diagonal
+
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 OUT_MD = os.path.join(RESULTS_DIR, "step7.md")
 SECTION_HEADER = "## M1 -- polyline and linearization certificates"
@@ -67,6 +72,32 @@ SECTION_HEADER = "## M1 -- polyline and linearization certificates"
 def _bspline_from_fit(fit) -> BSpline:
     knots, c_list, k = fit.tck
     return BSpline(knots, np.column_stack(c_list), k)
+
+
+def fit_validity(track, fit) -> tuple[bool, str | None]:
+    """ADR-0010: a fit is invalid (excluded from S2's pass/fallback counts
+    entirely) if EITHER fixed condition fails:
+      1. dense-grid deviation from the track (traj.spline.dense_max_error's
+         existing point-to-segment-on-a-dense-grid methodology, mode="time")
+         exceeds S2_VALIDITY_DEVIATION_FACTOR * the fitter's own tol;
+      2. any control point is more than S2_VALIDITY_CONTROL_BOUND_FACTOR bbox
+         diagonals of the track away from the track's own first point.
+    Thresholds are fixed before the run; see ADR-0010 for why and for the
+    process to follow if they turn out to need revisiting.
+    """
+    dev = dense_max_error(track.t, track.xy, fit.tck, mode="time")
+    if dev > S2_VALIDITY_DEVIATION_FACTOR * S2_FIT_TOL:
+        return False, "dense_deviation"
+
+    _, c_list, _ = fit.tck
+    c = np.column_stack(c_list)
+    bbox_diag = _bbox_diagonal(track.xy)
+    ref = track.xy[0]
+    max_ctrl_dist = float(np.max(np.hypot(*(c - ref).T)))
+    if max_ctrl_dist > S2_VALIDITY_CONTROL_BOUND_FACTOR * bbox_diag:
+        return False, "control_point_bound"
+
+    return True, None
 
 
 # --- M1.1 diagnostics (docs/reviews/step7_M1.md item 0) ---------------------------
@@ -263,19 +294,38 @@ def _certify_reference(bs: BSpline) -> tuple[float | None, bool]:
     return None, False
 
 
-def run_s2(tracks, label: str) -> dict:
+def run_s2(tracks, label: str, fitter=fit_adaptive) -> dict:
     n_pass = 0
-    n_fallback = 0  # eps_A == inf at the certificate's own lam
+    n_fallback = 0  # eps_A == inf at the certificate's own lam (or the fit itself raised)
+    n_fit_error = 0  # fitter raised -- distinct from a certification-level fallback
     n_ref_unavailable = 0
+    n_invalid_fit = 0  # ADR-0010: excluded from pass/fallback entirely
+    invalid_reasons: list[str] = []
+    dense_deviations: list[float] = []  # every successfully-fitted track, valid or not --
+    control_ratios: list[float] = []    # lets us re-derive alternate thresholds without re-fitting
     n_total = 0
     t0 = time.time()
     for idx, tr in enumerate(tracks):
         n_total += 1
         try:
-            fit = fit_adaptive(tr, tol=S2_FIT_TOL)
+            fit = fitter(tr, tol=S2_FIT_TOL)
             bs = _bspline_from_fit(fit)
         except (ValueError, np.linalg.LinAlgError):
+            n_fit_error += 1
             n_fallback += 1
+            continue
+
+        dev = dense_max_error(tr.t, tr.xy, fit.tck, mode="time")
+        dense_deviations.append(dev)
+        _, c_list, _ = fit.tck
+        c = np.column_stack(c_list)
+        bbox_diag = _bbox_diagonal(tr.xy)
+        control_ratios.append(float(np.max(np.hypot(*(c - tr.xy[0]).T))) / max(bbox_diag, 1e-9))
+
+        valid, reason = fit_validity(tr, fit)
+        if not valid:
+            n_invalid_fit += 1
+            invalid_reasons.append(reason)
             continue
 
         eps_A, cert_ok = certify_spline_linearization(tr.xy, bs, S2_LAM, eta=S2_ETA, max_levels=S2_MAX_LEVELS)
@@ -298,7 +348,12 @@ def run_s2(tracks, label: str) -> dict:
     return {
         "n_pass": n_pass,
         "n_fallback": n_fallback,
+        "n_fit_error": n_fit_error,
         "n_ref_unavailable": n_ref_unavailable,
+        "n_invalid_fit": n_invalid_fit,
+        "invalid_reasons": invalid_reasons,
+        "dense_deviations": dense_deviations,
+        "control_ratios": control_ratios,
         "n_total": n_total,
         "elapsed": time.time() - t0,
     }

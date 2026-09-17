@@ -29,3 +29,15 @@ there, in the "Not investigated" section.
   5_000_000` (S2's spline-vs-original-track certificates can reach that size).
   Verified identical to the original `O(nm)` kernels via
   `test_rolling_dp_matches_full_dp` (200 random cases, exact boolean match).
+
+- OPEN (step7 M1.2, `docs/decisions/ADR-0012-s2-invalid-fit-threshold-sensitivity.md`):
+  `src/traj/spline_lsq.py`'s fitters (`fit_adaptive`, `fit_uniform`) have no
+  mechanism to control error *between* samples, only *at* them, unlike
+  `src/traj/spline.py`'s `fit()`. On real GeoLife tracks this gives a very
+  high "invalid fit" rate under S2's validity check (93.8% at the fixed
+  10x/100x threshold, still 17.9% at a 1000x/1000x comparison threshold) --
+  not a threshold-calibration problem, a structural gap in the fitter. A
+  proper fix (a dense-error-aware fitting mode for `spline_lsq.py`, mirroring
+  `spline.py`'s densify mechanism, or reconsidering `S2_FIT_TOL` itself) is
+  out of scope for M1.2 (about the certification algorithm, not the fitting
+  methodology) -- open for a future milestone.

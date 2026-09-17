@@ -219,11 +219,138 @@ Depth alone understates the fix's value: the "now-certifying" cohort still avera
 resolves in 2), but the meaningful outcome is 22 tracks moving from *no certificate at any depth*
 to *a valid one* -- something the old algorithm could never produce regardless of `max_levels`.
 
-**Full-corpus re-run: not executed, per the timing budget.** The 100-sample took 703.0s
-(7.03s/track, includes root-finding overhead vs. the original algorithm) -- extrapolated to the
-full 585-track corpus, **~4113s (~68.5 minutes), exceeding the 40-minute budget**. Per the
+**Full-corpus re-run: not executed at M1.1 time, per the timing budget.** The 100-sample took
+703.0s (7.03s/track, includes root-finding overhead vs. the original algorithm) -- extrapolated to
+the full 585-track corpus, **~4113s (~68.5 minutes), exceeding the 40-minute budget**. Per the
 instruction to record this decision rather than force a long run blind: the full corpus was not
-re-run. Combining the confirmed no-regression 539 passes with the 22 newly-certifying tracks gives
-an **estimated (not directly verified) 561/585** S2 pass count post-fix -- reported as an estimate,
-not a fact, until an actual full run is done (a natural candidate for a background run in a future
-session, or with root-finding's overhead optimized first).
+re-run at that time. Combining the confirmed no-regression 539 passes with the 22 newly-certifying
+tracks gave an **estimated (not directly verified) 561/585** S2 pass count post-fix -- reported as
+an estimate, not a fact. M1.2 (below) replaces this estimate with an actual full-corpus run.
+
+### M1.2 -- ADR system, S2 fit-validity gate, full-corpus S2 re-run, eps_A/LB tail
+
+**ADR system**: retroactive ADRs 0001-0011 written for the full M0-M1.1 decision history
+(`docs/decisions/`), including two "Superseded" ADRs for decisions that were later reversed
+(discriminant clamp -> strict check; global-scale margin -> recentering + local margin -- the
+latter never shipped, caught in planning, documented anyway since the reasoning is real). ADR-0012
+(below) is this milestone's own decision, written the normal way (before/alongside the code and
+run it governs, not retroactively).
+
+**S2 fit-validity gate (ADR-0010)**: M1.1's estimate silently mixed two different failure modes
+under "fallback" -- the certification algorithm failing on a *geometrically valid* linearization,
+and the certification algorithm being handed a *numerically garbage* spline fit (at least 26/46 of
+M1.1's original failures had `fit_adaptive` control points diverging by orders of magnitude from
+the track itself). `fit_validity()` (`benchmarks/step7_certify.py`) now runs before certification
+is attempted for every S2 track, checking two fixed thresholds (set before this milestone's run,
+per ADR-0010, and not adjusted afterward):
+
+1. dense-grid deviation of the spline from the track (`traj.spline.dense_max_error`, reusing the
+   same "error between samples, not just at them" check `spline.py`'s own fitter already applies,
+   which `spline_lsq.py`'s fitters do not) `<= 10 x S2_FIT_TOL` (50 m);
+2. every control point within `100x` the track's own bbox diagonal of its first point.
+
+A track failing either check is **invalid fit**: excluded from S2's pass/fallback counts entirely,
+neither a pass nor a certification failure, because certification was never meaningfully attempted
+on an honest representation.
+
+**Fitter choice (ADR-0011)**: M1's original choice of `fit_adaptive` over `fit_uniform` had no
+recorded justification. A 60-track comparison (seed 7) found no meaningful difference in invalid
+rate (91.7% both) but a better tail for `fit_adaptive` (max deviation 1.3e6 vs. 2.1e7) -- kept.
+
+**Full-corpus S2 re-run under the fixed ADR-0010 thresholds** (585/585 tracks, `fit_adaptive`):
+
+| Result | Count |
+|---|---|
+| pass | 36/585 (6.2%) |
+| fallback (valid fit, certification exhausted budget) | 0/585 |
+| fit error (fitter raised an exception) | 0/585 |
+| reference unavailable | 0/585 |
+| invalid fit | 549/585 (93.8%), all `dense_deviation` |
+
+Elapsed: 70.3s.
+
+**Threshold-sensitivity check (ADR-0012)**: 93.8% invalid was high enough to ask whether ADR-0010's
+thresholds were simply too strict, rather than editing them after the fact per the plan's
+contingency (new ADR + new run + both results reported). Computed the invalid-fraction sensitivity
+to the deviation multiplier directly from the cached per-track deviations (no re-fitting): 10x =
+0.938, 20x = 0.879, 50x = 0.776, 100x = 0.655, 200x = 0.496, 500x = 0.262, 1000x = 0.171, 2000x =
+0.109 -- a heavy-tailed distribution (median deviation ~989 m, p99 ~3.3e7 m, max ~3.9e17 m) with no
+natural "reasonable" cutoff a few multiples above `10x`. Ran the full corpus again at an explicit
+`1000x`/`1000x` comparison threshold to get real numbers rather than an extrapolation:
+
+| Result | Count |
+|---|---|
+| pass | 480/585 (82.1%) |
+| fallback | 0/585 |
+| fit error | 0/585 |
+| reference unavailable | 0/585 |
+| invalid fit | 105/585 (17.9%) -- 100 `dense_deviation`, 5 `control_point_bound` |
+
+Elapsed: 2235.8s (~37.3 minutes).
+
+**Decision (ADR-0012): keep ADR-0010's thresholds unchanged.** The high invalid rate is a
+structural property of `spline_lsq.py`'s fitters on real GeoLife data (no dense-error control
+between samples), not an artifact of an arbitrarily strict multiplier -- it persists at a still
+substantial 17.9% even two orders of magnitude more generous. Picking a "nicer" threshold post hoc
+would misrepresent a real methodology gap as a calibration problem. The gap is recorded as an open
+item in `TODO.md` for a future milestone, out of scope for M1.2 (which is about the certification
+algorithm, not the fitting methodology).
+
+**`n_fallback = 0` at both thresholds** is the headline result for the certification algorithm
+itself: every track with a valid fit gets certified, at either threshold. This closes M1.1's own
+open question -- the 46 originally-uncertified tracks were overwhelmingly a fit-quality problem,
+not an algorithm-level one; ADR-0008's root-splitting fix has zero remaining fallbacks once given
+a valid representation.
+
+**eps_A/LB tail, 5 worst polyline tracks** (informational, spec S3 density criterion is not an M1
+gate; p99 = 2.071, max = 6.585 from M1.1's diagnostics): the worst ratios come from tracks where
+the DP+SED simplification keeps very few vertices relative to a locally complex piece --
+
+| Track idx | eps_A/LB | Track points | Kept (polyline) vertices | Worst single piece (points) |
+|---|---|---|---|---|
+| 472 | 6.585 | 216 | 163 | 31 |
+| 475 | 2.645 | 397 | 21 | 51 |
+| 196 | 2.428 | 63 | 6 | 33 |
+| 476 | 2.198 | 195 | 16 | 44 |
+| 482 | 2.181 | 132 | 12 | 45 |
+
+Track 472 is the outlier: despite keeping 163/216 points (a comparatively *fine* simplification),
+its worst single piece still spans 31 original points -- consistent with a locally dense, sharply
+curved sub-path that DP+SED's global tolerance doesn't subdivide further. The other four keep far
+fewer vertices overall (6-21 of 63-397) with a worst piece of 33-51 points -- consistent with long,
+close-to-straight stretches allowing a large simplification tolerance, punctuated by one
+short-but-complex piece that the simplification wasn't forced to split. In all five, the gap
+between `eps_A` (the polyline's own certified upper bound) and `LB` (a coarse vertex-only
+Hausdorff estimate) is best read as the lower bound being loose on that particular piece, not as
+evidence of a certification problem -- `eps_A` is independently certified per §2.3/§2.5 regardless
+of how loose the informational `LB` comparison is.
+
+### M1 Conclusions
+
+**Results vs. criteria**: both M1 gate criteria (`benchmarks/results/step7.md` table above) pass
+at 100%: S1 585/585 against the mpmath reference, S2 539/585 pass with the remaining 46 an
+acknowledged, spec-flagged (section 10) fallback, not a bug. M1.2 does not change this gate result
+-- it replaces the *estimate* of what a fixed-code full-corpus S2 run produces with two actual
+runs at two different, honestly-reported fit-validity thresholds, both showing `n_fallback = 0`.
+
+**What we now know**: the certification algorithm (`certify_spline_linearization`,
+`_certify_segment`'s root-splitting + small-ball rule, ADR-0008) has no remaining failures once
+given a numerically valid spline representation -- confirmed at two different validity thresholds
+on the full 585-track corpus. The dominant real-world limitation for S2 is upstream of
+certification: `spline_lsq.py`'s fitters do not control error between samples, producing a very
+high "invalid fit" rate (93.8% at the fixed ADR-0010 threshold, still 17.9% at a two-orders-more
+generous comparison threshold) on real GeoLife tracks.
+
+**Decisions**: ADR-0010 (invalid-fit category + fixed thresholds), ADR-0011 (fitter choice,
+`fit_adaptive` kept), ADR-0012 (thresholds not changed after seeing results; both runs reported
+side by side, per plan). Twelve ADRs total now cover the M0-M1.2 decision history
+(`docs/decisions/README.md`).
+
+**Open issues**: the `spline_lsq.py` dense-error-control gap is recorded in `TODO.md` as an open
+item for a future milestone (a dense-error-aware fitting mode, or reconsidering `S2_FIT_TOL`) --
+not addressed in M1.2, which is scoped to the certification algorithm and its validation, not the
+fitting methodology.
+
+`docs/phases/step7_summary.md` (per `CLAUDE.md`'s Documentation rules, one page per gate) is not
+yet written -- it will be created at gate G1, after M3, once the full step7 phase's scope is
+complete, not at this intermediate milestone.

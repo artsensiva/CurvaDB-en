@@ -50,7 +50,25 @@ text, recorded in `docs/ROADMAP.md` section 8 (spec text itself untouched).
 
 ### Outcome (filled in after the corrected full-corpus run, `benchmarks/results/step7.md` M1.3)
 
-<!-- FILLED IN AFTER THE RUN -->
+Full 585-track run (`benchmarks/step7_m13_fitters.py`), both at `tol=10.0`, ADR-0010's
+unchanged 10x/100x multiplier, ADR-0014's `dense_mode` fix applied:
+
+| Fitter | Valid fits | Valid fraction | Elapsed |
+|---|---|---|---|
+| `fit_adaptive` | 527/585 (58 invalid, all `dense_deviation`) | 90.09% | 2602.4s |
+| `spline.fit()` | 585/585 (0 invalid) | 100.00% | 3367.2s |
+
+**Rule step 1 decides it outright**: the valid-fraction gap is 9.91 percentage points, well
+above the 5-point tie-break threshold -- no need to consult `eps_A`/`tol` or absolute `eps_A`.
+**`spline.fit()` is selected as S2's primary fitter.** `fit_adaptive` remains available as the
+comparison variant (per the original Decision), and the spec deviation this implies is recorded
+in `docs/ROADMAP.md` section 8 (already committed, `cdd1462`).
+
+For reference, the (unused, since the rule didn't reach step 3) tie-break indicators would have
+favored `spline.fit()` too: median `eps_A/tol` 0.811 vs. 0.754 (`fit_adaptive` slightly lower),
+but absolute median `eps_A` 8.114 m vs. 7.540 m (`fit_adaptive` slightly lower) -- the two
+indicators would have disagreed, which is exactly the scenario the rule's tie-break default
+(keep `spline.fit()`) was written for; moot here since step 1 alone decided it.
 
 ## Consequences
 

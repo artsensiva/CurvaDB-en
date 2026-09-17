@@ -159,6 +159,12 @@ Corpus: `load_clean_tracks(n=200, seed=42)` -> 585 cleaned track segments from 2
 | S1: polyline certificates (`certify_polyline`, eta=1e-06) vs. mpmath reference (per piece, dps=40, tol=1e-06) | `eps_A >= reference - 1e-06` for 100% of tracks | 585/585 (worst margin -5.000e-07) | yes |
 | S2: spline certificates via certified linearization (`certify_spline_linearization`, lam=0.1, eta=0.001) vs. near-exact reference (lam=0.0001) | `eps_A >= reference - 0.0001`, `eps_A` finite, for 100% of tracks with an available reference | 539/585 (46 fallback [uncertified linearization at lam=0.1], 0 reference-unavailable) | yes |
 
+**This S2 row is the original M1 measurement, kept as the historical record of that first run --
+it predates the "invalid fit" category (M1.2, ADR-0010) and the fitter-comparison/bug-fix (M1.3,
+ADR-0013/ADR-0014) and is superseded by them for anything about *current* S2 coverage.** See the
+M1.3 section below and the M1 Conclusions for the current picture (`spline.fit()`, 585/585 valid,
+585/585 pass) -- this row's "46 fallback, yes" should not be read as still describing today's S2.
+
 **Informational (not a gate):** median `eps_A/LB` for polylines (LB = directed Hausdorff distance both ways, spec section 2.5) = **1.000** -- a preliminary reading of spec S3's density criterion (median <= 1.2 for polylines) for gate G1; S3 itself is not an M1 gate and is not enforced here.
 
 **S2 pilot** (first 40 tracks, measured separately before the full run): 383.3s wall time, peak Python-tracked memory 236.5 MB (`tracemalloc`). Linear extrapolation to the full 585-track corpus predicted ~5605s; the actual full run took **2217.6s** (~37 minutes) -- the pilot's first-40 tracks were evidently not representative of the corpus average (front-loaded by some slower/larger tracks), so the projection overestimated by ~2.5x. Noted for future pilots: track order isn't a reliable proxy for per-track cost here: consider a random subsample for timing estimates instead of a fixed prefix.
@@ -355,31 +361,92 @@ piece" story would suggest, and the correct mechanism is the track's self-proxim
 non-corresponding parts of its own path -- itself a direct consequence of Fréchet's order
 constraint vs. Hausdorff's order-free matching, just not localized to a single piece.**
 
+### M1.3 -- fitter comparison (`docs/reviews/step7_M1_2.md`, ADR-0013/ADR-0014)
+
+**Bug fix first (ADR-0014):** `fit_validity()`'s dense-grid deviation check evaluated
+`spline_lsq.py` fits at the wrong parametrization domain (real-time-domain knots evaluated as if
+normalized to `u ∈ [0,1]`) -- M1.2's 93.8%/17.9% invalid-fit numbers were therefore largely
+measurement artifacts, not a reliable finding. Fixed by adding a `"raw"` mode to
+`traj.spline._param_u` and a domain-consistency guard (`_check_tck_domain`) that raises
+`ValueError` on any tck/mode mismatch, verified on a 60-track sample (buggy 54/60 (90%) invalid
+vs. corrected 11/60 (18.3%)) and with a regression test that fails on the pre-fix code. ADR-0010's
+thresholds are unaffected (the bug was in the measurement, not the check's design); ADR-0012's
+sensitivity analysis is superseded (it was computed from the same broken measurement).
+
+**Fitter comparison (ADR-0013):** the review's finding 1 -- `spline.py`'s `fit()` already exists
+and dense-error-controls by construction, `spline_lsq.py`'s fitters don't -- is checked by running
+both fitters on the corrected full 585-track corpus, same `tol=10.0` (step1's own value), same
+ADR-0010 multiplier, decided by a rule fixed *before* the run:
+
+| Fitter | Valid | Pass | Invalid (reason) | Elapsed | `eps_A` p50/p90/p99/max | `eps_A/tol` median/p90/p99/max |
+|---|---|---|---|---|---|---|
+| `fit_adaptive` (corrected) | 527/585 (90.1%) | 527/585 | 58 (`dense_deviation`) | 2602.4s | 7.54 / 15.76 / 50.62 / 87.52 | 0.754 / 1.576 / 5.062 / 8.752 |
+| `spline.fit()` | 585/585 (100.0%) | 585/585 | 0 | 3367.2s | 8.11 / 10.58 / 15.87 / 23.83 | 0.811 / 1.058 / 1.587 / 2.383 |
+
+The valid-fraction gap (9.9 points) exceeds ADR-0013's 5-point tie-break threshold, so the rule
+decides at step 1: **`spline.fit()` is selected as S2's primary fitter.** (Had it reached the
+tie-break, the two indicators would have disagreed -- `fit_adaptive` has a lower median
+`eps_A/tol` but also a lower absolute median `eps_A`, an inherently ambiguous comparison the rule
+resolves by default toward `spline.fit()`; moot here.) This is a deliberate deviation from spec
+section 2.1's literal "S2 uses `spline_lsq`", recorded in `docs/ROADMAP.md` section 8.
+`fit_adaptive` remains available as the comparison variant.
+
+`spline.fit()`'s much tighter `eps_A/tol` tail (max 2.38 vs. 8.75) is exactly what "dense-error
+control by construction" predicts: `fit_adaptive`'s handful of surviving-but-marginal fits (valid
+under the `10x` deviation threshold, i.e. `<=100` m, but closer to that ceiling than to `tol`
+itself) drag its tail up, while `spline.fit()`'s dense-check-during-fitting keeps every valid fit
+close to `tol` by construction.
+
 ### M1 Conclusions
 
-**Results vs. criteria**: both M1 gate criteria (`benchmarks/results/step7.md` table above) pass
-at 100%: S1 585/585 against the mpmath reference, S2 539/585 pass with the remaining 46 an
-acknowledged, spec-flagged (section 10) fallback, not a bug. M1.2 does not change this gate result
--- it replaces the *estimate* of what a fixed-code full-corpus S2 run produces with two actual
-runs at two different, honestly-reported fit-validity thresholds, both showing `n_fallback = 0`.
+**Results vs. criteria**: S1's gate criterion passes at 100% (585/585 against the mpmath
+reference, worst margin -5.000e-07). S2's gate criterion, taken *literally* as first measured
+(`certify_spline_linearization` on `fit_adaptive` at `tol=5.0`, no invalid-fit distinction yet),
+passed at 539/585 with 46 acknowledged, spec-flagged (section 10) fallbacks -- but that specific
+number is a snapshot of the *first* run, superseded for anything about *current* S2 behavior by
+M1.2's invalid-fit distinction and M1.3's bug fix and fitter switch (below). There is no single
+"S2 coverage" percentage that stays fixed across M1.1/M1.2/M1.3 -- it depends on which fitter,
+which validity threshold, and (M1.3) a since-fixed measurement bug, so each is stated explicitly
+rather than collapsed into one headline number:
 
-**What we now know**: the certification algorithm (`certify_spline_linearization`,
-`_certify_segment`'s root-splitting + small-ball rule, ADR-0008) has no remaining failures once
-given a numerically valid spline representation -- confirmed at two different validity thresholds
-on the full 585-track corpus. The dominant real-world limitation for S2 is upstream of
-certification: `spline_lsq.py`'s fitters do not control error between samples, producing a very
-high "invalid fit" rate (93.8% at the fixed ADR-0010 threshold, still 17.9% at a two-orders-more
-generous comparison threshold) on real GeoLife tracks.
+| Stage | Fitter | Valid/total | Notes |
+|---|---|---|---|
+| M1 (original) | `fit_adaptive`, `tol=5.0` | -- (539/585 pass, 46 fallback; no invalid-fit split yet) | superseded by M1.2's split |
+| M1.2, ADR-0010 threshold | `fit_adaptive`, `tol=5.0` | 36/585 (6.2%) valid -- **measurement later found buggy (ADR-0014)** | not a reliable number as reported |
+| M1.2, ADR-0012 alt. threshold | `fit_adaptive`, `tol=5.0` | 480/585 (82.1%) valid -- **measurement later found buggy (ADR-0014)** | not a reliable number as reported |
+| M1.3, corrected | `fit_adaptive`, `tol=10.0` | 527/585 (90.1%) valid, 527/585 pass | bug-fixed (ADR-0014), still `spline_lsq`'s own architectural gap |
+| M1.3, corrected | `spline.fit()`, `tol=10.0` | 585/585 (100.0%) valid, 585/585 pass | **current primary fitter (ADR-0013)** |
 
-**Decisions**: ADR-0010 (invalid-fit category + fixed thresholds), ADR-0011 (fitter choice,
-`fit_adaptive` kept), ADR-0012 (thresholds not changed after seeing results; both runs reported
-side by side, per plan). Twelve ADRs total now cover the M0-M1.2 decision history
-(`docs/decisions/README.md`).
+**What's confirmed about certification *correctness*** (independent of which fitter or threshold):
+`n_fallback = 0` in every M1.2/M1.3 full-corpus run, at every threshold, for both fitters -- the
+certification algorithm itself (`certify_spline_linearization`, `_certify_segment`'s
+root-splitting + small-ball rule, ADR-0008) has no remaining failures once given *any* numerically
+valid spline representation. This closes M1.1's own open question: the original 46 uncertified
+tracks were overwhelmingly a fit-quality problem, never an algorithm-level one. Also confirmed:
+`eps_A` exactly matches the mpmath ground-truth reference for the 5 worst S1 eps_A/LB tracks (the
+S1 certificate itself is not loose, M1.3's tail verification above).
 
-**Open issues**: the `spline_lsq.py` dense-error-control gap is recorded in `TODO.md` as an open
-item for a future milestone (a dense-error-aware fitting mode, or reconsidering `S2_FIT_TOL`) --
-not addressed in M1.2, which is scoped to the certification algorithm and its validation, not the
-fitting methodology.
+**What's confirmed about *coverage and density*** (fitter- and threshold-dependent, unlike
+correctness): with the bug fixed and `spline.fit()` selected as the primary fitter (ADR-0013),
+S2's *current* coverage is **585/585 (100%) valid and passing** -- a materially better position
+than M1.2's headline "93.8% invalid" ever suggested, because that headline was itself
+measurement-broken (ADR-0014). `fit_adaptive`'s own (bug-fixed) coverage, 90.1%, confirms
+`spline_lsq.py`'s architectural gap (no dense-error control between samples) is real but smaller
+than M1.2 reported. The S1 eps_A/LB density tail (5 worst tracks, informational, not a gate) is
+explained by global self-proximity of the track's own path, not by a loose certificate or by
+naive within-piece backtracking (M1.3 tail verification above).
+
+**Decisions**: ADR-0010 (invalid-fit category + fixed thresholds -- design unaffected by the later
+bug), ADR-0011 (fit_adaptive vs. fit_uniform, superseded in relevance by ADR-0013's broader
+comparison), ADR-0012 (sensitivity analysis, **superseded by ADR-0014** -- built on the buggy
+measurement), ADR-0013 (fitter comparison rule and outcome: `spline.fit()` selected), ADR-0014
+(the parametrization-domain bug and its fix). Fourteen ADRs total now cover the M0-M1.3 decision
+history (`docs/decisions/README.md`).
+
+**Open issues**: `spline_lsq.py`'s fitters themselves are unchanged -- no dense-error-aware
+fitting mode was added to them; the resolution was a fitter *choice* (`spline.fit()` instead), not
+a fix to `spline_lsq.py`. If a future milestone specifically needs `spline_lsq`'s fitters (not
+`spline.fit()`) to control dense error, that would be new, separate work (`TODO.md`).
 
 `docs/phases/step7_summary.md` (per `CLAUDE.md`'s Documentation rules, one page per gate) is not
 yet written -- it will be created at gate G1, after M3, once the full step7 phase's scope is

@@ -30,14 +30,24 @@ there, in the "Not investigated" section.
   Verified identical to the original `O(nm)` kernels via
   `test_rolling_dp_matches_full_dp` (200 random cases, exact boolean match).
 
-- OPEN (step7 M1.2, `docs/decisions/ADR-0012-s2-invalid-fit-threshold-sensitivity.md`):
-  `src/traj/spline_lsq.py`'s fitters (`fit_adaptive`, `fit_uniform`) have no
-  mechanism to control error *between* samples, only *at* them, unlike
-  `src/traj/spline.py`'s `fit()`. On real GeoLife tracks this gives a very
-  high "invalid fit" rate under S2's validity check (93.8% at the fixed
-  10x/100x threshold, still 17.9% at a 1000x/1000x comparison threshold) --
-  not a threshold-calibration problem, a structural gap in the fitter. A
-  proper fix (a dense-error-aware fitting mode for `spline_lsq.py`, mirroring
-  `spline.py`'s densify mechanism, or reconsidering `S2_FIT_TOL` itself) is
-  out of scope for M1.2 (about the certification algorithm, not the fitting
-  methodology) -- open for a future milestone.
+- RESOLVED (step7 M1.2/M1.3, `docs/decisions/ADR-0010-invalid-fit-category.md`,
+  `docs/decisions/ADR-0012-s2-invalid-fit-threshold-sensitivity.md`,
+  `docs/decisions/ADR-0013-spline-fit-for-s2.md`,
+  `docs/decisions/ADR-0014-dense-error-domain-bug.md`): M1.2 reported a very
+  high "invalid fit" rate for `src/traj/spline_lsq.py`'s fitters (93.8%/17.9%
+  at two thresholds) and attributed it entirely to a structural gap (no
+  dense-error control between samples, unlike `src/traj/spline.py`'s
+  `fit()`). M1.3 found that measurement itself was partly broken (ADR-0014:
+  `fit_validity()`'s dense-check evaluated `spline_lsq` fits at the wrong
+  parametrization domain) -- the real invalid rate is lower but still
+  nonzero (~18.3% on a 60-track sample after the fix), confirming the
+  underlying architectural gap is real, just smaller than first reported.
+  Resolved via ADR-0013: `spline.py`'s `fit()` (dense-error-controlled by
+  construction) is compared against `spline_lsq` by a pre-registered rule;
+  the outcome and full-corpus numbers are in
+  `benchmarks/results/step7.md`'s M1.3 section. `spline_lsq.py`'s fitters
+  themselves are unchanged -- no dense-error-aware fitting mode was added to
+  them, since the resolution was a fitter *choice*, not a fix to
+  `spline_lsq.py` -- record that as a still-open item only if a future
+  milestone specifically needs `spline_lsq`'s fitters (not `spline.fit()`)
+  to control dense error.

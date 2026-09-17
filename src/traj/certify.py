@@ -16,6 +16,13 @@ from traj.frechet_cont import distance_upper
 
 _MACHINE_EPS = float(np.finfo(np.float64).eps)
 
+# How close (in the piece's own local [0,1] parameter) a root of the chord-
+# projected derivative may be to an endpoint before _certify_segment prefers
+# plain bisection instead -- see _certify_segment's docstring for why this
+# guard is necessary (an empirically-found pathological case, not anticipated
+# by the original root-splitting design).
+_BOUNDARY_MARGIN = 0.05
+
 
 def _bbox_diagonal(*polylines: np.ndarray) -> float:
     stacked = np.vstack(polylines)
@@ -183,8 +190,27 @@ def _certify_segment(seg: np.ndarray, lam: float, levels_left: int) -> tuple[lis
     monotonicity along a different sub-piece's own chord, so root-finding must be
     redone at every level, relative to whatever chord that level's _certified_ok
     check just failed against. Falls back to a plain t=0.5 bisection when the
-    chord is degenerate or no interior root is found (the original strategy,
-    still needed as a safety net)."""
+    chord is degenerate, no interior root is found, or every root found is too
+    close to an endpoint (see _BOUNDARY_MARGIN below) -- the original strategy,
+    still needed both as a safety net and to guarantee steady progress.
+
+    Boundary-margin guard (found necessary empirically, not anticipated by the
+    original design): near a near-tangential root (the projection dips to ~0 and
+    back without a clean crossing), the root returned by
+    _projection_roots_in_unit_interval can sit extremely close to one endpoint
+    and, after splitting there, reappear just as close to the endpoint of the
+    resulting large child's own new local parametrization -- repeating at every
+    recursion level. This produces a razor-thin certified sliver each time while
+    the other child's chord barely shrinks, burning nearly the whole max_levels
+    budget without shrinking the piece enough to satisfy the tube condition
+    (confirmed directly: a real track segment needed 9 of 12 levels chasing a
+    root from t=0.012 down to t=1.6e-9 before falling back to bisection too late
+    to converge -- a genuine regression against the pre-fix algorithm, which just
+    bisected at 0.5 and converged in time). Only roots within
+    [_BOUNDARY_MARGIN, 1-_BOUNDARY_MARGIN] are used; otherwise plain bisection
+    guarantees both children shrink by half every level, regardless of where the
+    problematic feature sits.
+    """
     if _certified_ok(seg, lam):
         return [seg[-1]], True
     if levels_left == 0:
@@ -196,9 +222,10 @@ def _certify_segment(seg: np.ndarray, lam: float, levels_left: int) -> tuple[lis
     if chord_len >= 1e-12:
         e = (b - a) / chord_len
         roots = _projection_roots_in_unit_interval(derivative_control_points(seg), e)
-        if roots:
-            split_t = roots[0]  # any remaining roots are rediscovered relative to
-            # each half's own new chord, in the recursive calls below
+        for r in roots:
+            if _BOUNDARY_MARGIN <= r <= 1.0 - _BOUNDARY_MARGIN:
+                split_t = r
+                break
 
     left, right = de_casteljau_split(seg, split_t)
     lv, lok = _certify_segment(left, lam, levels_left - 1)

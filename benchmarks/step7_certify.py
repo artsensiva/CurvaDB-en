@@ -376,6 +376,80 @@ def main() -> None:
     print(f"\nwrote {OUT_MD}", flush=True)
 
 
+# --- M1.1 post-fix re-validation (docs/reviews/step7_M1.md item 3) ---------------
+
+
+def _new_certify_segment_depth(seg, lam, levels_left, depth, state) -> bool:
+    """Mirrors the actual (post-fix) traj.certify._certify_segment, instrumented
+    to track max recursion depth -- for the before/after depth comparison on the
+    46 formerly-failing tracks. Imports the real _certified_ok/root-finding (not a
+    frozen copy, unlike the pre-fix diagnostics): this inspects the final,
+    maintained algorithm, so staying in sync with it is correct, not a liability.
+    """
+    from traj.certify import _certified_ok, _projection_roots_in_unit_interval
+
+    state["max_depth"] = max(state["max_depth"], depth)
+    if _certified_ok(seg, lam):
+        return True
+    if levels_left == 0:
+        return False
+    a, b = seg[0], seg[-1]
+    chord_len = float(np.hypot(*(b - a)))
+    split_t = 0.5
+    if chord_len >= 1e-12:
+        e = (b - a) / chord_len
+        roots = _projection_roots_in_unit_interval(derivative_control_points(seg), e)
+        if roots:
+            split_t = roots[0]
+    left, right = de_casteljau_split(seg, split_t)
+    ok_left = _new_certify_segment_depth(left, lam, levels_left - 1, depth + 1, state)
+    ok_right = _new_certify_segment_depth(right, lam, levels_left - 1, depth + 1, state)
+    return ok_left and ok_right
+
+
+def _new_certified_linearize_depth(bs: BSpline, lam: float, max_levels: int) -> int:
+    segments = bezier_segments(bs)
+    state = {"max_depth": 0}
+    for seg in segments:
+        _new_certify_segment_depth(seg, lam, max_levels, 0, state)
+    return state["max_depth"]
+
+
+def rerun_targeted_46(tracks, failing_indices: list[int]) -> dict:
+    print("\n=== S2 re-run: 46 former failures ===", flush=True)
+    failing_tracks = [tracks[i] for i in failing_indices]
+    result = run_s2(failing_tracks, label="46-recheck")
+    n_now_certified = result["n_total"] - result["n_fallback"]
+
+    depths_after = []
+    for tr in failing_tracks:
+        try:
+            fit = fit_adaptive(tr, tol=S2_FIT_TOL)
+            bs = _bspline_from_fit(fit)
+        except (ValueError, np.linalg.LinAlgError):
+            continue
+        depths_after.append(_new_certified_linearize_depth(bs, S2_LAM, S2_MAX_LEVELS))
+
+    print(f"  {n_now_certified}/{len(failing_indices)} now get a finite certificate at lam={S2_LAM} "
+          f"(vs. 0/{len(failing_indices)} before); {result['n_fallback']} still fallback", flush=True)
+    print(f"  recursion depth after fix: mean={np.mean(depths_after):.2f} max={np.max(depths_after)}", flush=True)
+    result["depths_after"] = depths_after
+    result["n_now_certified"] = n_now_certified
+    return result
+
+
+def rerun_sample_100(tracks, passing_indices: list[int], seed: int = 123) -> dict:
+    print("\n=== S2 re-run: random 100-sample of previously-passing tracks ===", flush=True)
+    rng = np.random.default_rng(seed)
+    sample_idx = rng.choice(passing_indices, size=min(100, len(passing_indices)), replace=False)
+    sample_tracks = [tracks[i] for i in sample_idx]
+    result = run_s2(sample_tracks, label="100-sample")
+    print(f"  {result['n_pass']}/{result['n_total']} pass, {result['n_fallback']} fallback, "
+          f"{result['n_ref_unavailable']} reference-unavailable, {result['elapsed']:.1f}s "
+          f"({result['elapsed'] / len(sample_tracks):.3f}s/track)", flush=True)
+    return result
+
+
 def main_diagnose_only() -> dict:
     """M1.1 item 0: run just the pre-fix diagnostics (no mpmath, no full S1/S2) --
     used once before touching certify.py, and its output is folded into the M1.1

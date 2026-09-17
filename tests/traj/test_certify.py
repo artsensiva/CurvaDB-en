@@ -162,9 +162,12 @@ def test_certified_linearize_reversal():
     """Genuine sign change in the chord-projected derivative (confirmed this
     session: derivative-projection Bernstein coefficients [6,-9,6], two real
     roots at u ~ 0.276, 0.724) -- fails _certified_ok's monotonicity check at any
-    lam under the OLD (blind-bisection) algorithm needs ~20 levels to resolve;
-    root-splitting resolves it in 1 level (verified directly: _certify_segment
-    with levels_left=1 already succeeds)."""
+    lam under the OLD (blind-bisection) algorithm, which needs ~20 levels to
+    resolve; root-splitting resolves it in 2 levels at lam=0.5 (verified directly:
+    _certify_segment with levels_left=1 still fails, levels_left=2 succeeds --
+    the boundary-margin guard in _certify_segment's docstring means a single
+    split doesn't always suffice even when clean roots exist, but it's still a
+    large improvement over ~20)."""
     seg = np.array([[0.0, 0.0], [2.0, 0.0], [-1.0, 0.0], [1.0, 0.0]])
     _assert_certified_and_within_lam(seg, lam=0.5)
 

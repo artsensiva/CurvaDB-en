@@ -302,28 +302,58 @@ open question -- the 46 originally-uncertified tracks were overwhelmingly a fit-
 not an algorithm-level one; ADR-0008's root-splitting fix has zero remaining fallbacks once given
 a valid representation.
 
-**eps_A/LB tail, 5 worst polyline tracks** (informational, spec S3 density criterion is not an M1
-gate; p99 = 2.071, max = 6.585 from M1.1's diagnostics): the worst ratios come from tracks where
-the DP+SED simplification keeps very few vertices relative to a locally complex piece --
+**eps_A/LB tail, 5 worst polyline tracks -- verified, not asserted (M1.3,
+`docs/reviews/step7_M1_2.md` finding 4, `benchmarks/step7_m13_tail.py`).** M1.2's text asserted
+"the lower bound is loose" without checking. For each of the 5 tracks, `k*` is the piece that
+literally *determines* `eps_A` (`argmax_k cert_k`, matching `certify_polyline`'s own
+`eps_A = max_k cert_k` -- not a piece-size or piece-local-ratio proxy, both of which were tried
+first and found to be dominated by noise from degenerate 2-point pieces where both the piece's
+own certified cost and its own Hausdorff bound are near zero).
 
-| Track idx | eps_A/LB | Track points | Kept (polyline) vertices | Worst single piece (points) |
-|---|---|---|---|---|
-| 472 | 6.585 | 216 | 163 | 31 |
-| 475 | 2.645 | 397 | 21 | 51 |
-| 196 | 2.428 | 63 | 6 | 33 |
-| 476 | 2.198 | 195 | 16 | 44 |
-| 482 | 2.181 | 132 | 12 | 45 |
+| Track idx | global ratio | `eps_A` | mpmath ref | `eps_A == ref`? | `k*` range | `cert_k*` | `LB_hausdorff` (k*, local) | `LB_back` (k*) | frac. decreasing | confirmed (`<= *1.05`) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 472 | 6.585 | 7.3739 | 7.3739 | yes | [172:176] | 7.3739 | 7.3739 | 0.0000 | 0.000 | yes |
+| 475 | 2.645 | 8.9990 | 8.9990 | yes | [129:179] | 8.9990 | 8.9990 | 2.4090 | 0.360 | yes |
+| 196 | 2.428 | 6.1966 | 6.1966 | yes | [3:35] | 6.1966 | 6.1966 | 1.2238 | 0.188 | yes |
+| 476 | 2.198 | 5.1885 | 5.1885 | yes | [30:40] | 5.1885 | 5.1885 | 0.3216 | 0.200 | yes |
+| 482 | 2.181 | 6.4740 | 6.4740 | yes | [87:131] | 6.4740 | 6.4740 | 2.6360 | 0.295 | yes |
 
-Track 472 is the outlier: despite keeping 163/216 points (a comparatively *fine* simplification),
-its worst single piece still spans 31 original points -- consistent with a locally dense, sharply
-curved sub-path that DP+SED's global tolerance doesn't subdivide further. The other four keep far
-fewer vertices overall (6-21 of 63-397) with a worst piece of 33-51 points -- consistent with long,
-close-to-straight stretches allowing a large simplification tolerance, punctuated by one
-short-but-complex piece that the simplification wasn't forced to split. In all five, the gap
-between `eps_A` (the polyline's own certified upper bound) and `LB` (a coarse vertex-only
-Hausdorff estimate) is best read as the lower bound being loose on that particular piece, not as
-evidence of a certification problem -- `eps_A` is independently certified per §2.3/§2.5 regardless
-of how loose the informational `LB` comparison is.
+Two things are now directly verified, not assumed:
+
+1. **`eps_A` exactly equals the mpmath ground-truth reference for all 5 tracks** -- the S1
+   certificate is not loose relative to the true continuous Fréchet distance. This directly
+   confirms the review's "not a loose certificate" premise.
+2. **`cert_k*` exactly equals that piece's own local `LB_hausdorff` in all 5 cases**, regardless of
+   how much the piece backtracks (`frac_decreasing` up to 36%) -- a structural fact, not a
+   coincidence: the Fréchet distance from a curve to a single straight *segment* (as opposed to a
+   multi-vertex polyline) always equals the max point-to-segment distance, because the segment's
+   own free parametrization can pause/backtrack at zero cost to absorb any backtracking the curve
+   does. So `LB_back` (real, and sometimes substantial -- 2.41 m for idx=475) never actually
+   inflates a piece's own certified cost beyond its own local Hausdorff bound for *this*
+   certificate structure (piece vs. its 2-point segment). The "confirmed" check
+   (`cert_k* <= max(LB_hausdorff_local, LB_back) * 1.05`) holds for all 5, trivially so, since
+   `cert_k*` and `LB_hausdorff_local` are already equal.
+
+**So the mechanism explaining the whole-track `eps_A`/`LB` gap is refined, not simply confirmed
+as "within-piece backtracking":** it is a **self-proximity** effect at the *global* level.
+`LB` (`hausdorff_lower_bound`, spec 2.5) is computed against the *entire* simplified polyline, so
+a point in piece `k*` can be matched, for the purpose of that lower bound, to *any* other,
+non-corresponding segment elsewhere in the polyline -- and for idx=472 specifically, it is: that
+piece's own local Hausdorff/Fréchet cost is 7.3739, `frac_decreasing = 0` (no backtracking
+whatsoever within the piece -- its own chord-projection is strictly increasing), yet the
+whole-track `LB` is only 1.1199, a 6.6x gap. The only way a *non-backtracking* piece can produce
+that gap is if some *other*, temporally non-corresponding part of the 163-vertex simplified
+polyline happens to pass within ~1.12 m of these points in space -- i.e. the track loops close to
+another part of itself. The order-preserving Fréchet coupling cannot use that spatial shortcut (it
+must honestly match piece `k*` to its own corresponding segment); Hausdorff's any-to-any matching
+can. For idx=475/196/476/482, both effects likely coexist (real within-piece backtracking,
+`frac_decreasing` 18.8-36%, plus some self-proximity) but only the global self-proximity effect
+can be responsible for the *size* of the gap, since the piece-local backtracking is proven above
+to cost nothing extra against a straight 2-segment. **Net: `eps_A` is not loose (verified against
+mpmath); the informational `LB` is a genuinely weaker bound than a naive "backtracking within one
+piece" story would suggest, and the correct mechanism is the track's self-proximity to other,
+non-corresponding parts of its own path -- itself a direct consequence of Fréchet's order
+constraint vs. Hausdorff's order-free matching, just not localized to a single piece.**
 
 ### M1 Conclusions
 

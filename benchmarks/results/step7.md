@@ -166,3 +166,64 @@ Corpus: `load_clean_tracks(n=200, seed=42)` -> 585 cleaned track segments from 2
 **Fallback / reference-unavailable tracks are a real, expected outcome** (spec section 10's acknowledged risk: spline loops relative to a chord break the monotonicity test at any subdivision depth) -- not a bug. `certify_spline_linearization` returns `(inf, False)` for these (item 0.4), and they are excluded from the S2 pass/fail count, not silently treated as passes.
 
 `decide()`/`decide_conservative()`'s rolling-row kernels (item 4) were exercised transparently wherever a track's `n * m` (original vs. linearized-spline segment count) exceeded 5,000,000 during S2 -- no separate accounting needed, both code paths are verified equivalent (`test_rolling_dp_matches_full_dp`).
+
+### M1.1 -- spec section 2.4 correction (`docs/reviews/step7_M1.md`, `docs/ROADMAP.md` section 8)
+
+**Spec error confirmed**: section 2.4's claim that the certified-linearization path is "always
+applicable" (`Путь всегда применим`) is empirically false -- 46/585 (7.9%) tracks got no
+certificate at `lam=0.1, max_levels=12`. Root cause (diagnosed before any code change): blind
+`t=0.5` bisection can take far more levels than the budget allows to resolve a genuine sign
+change in the chord-projected derivative (a synthetic case needed ~20 levels, not 12), and
+near-stationary segments make the chord *direction* itself ill-conditioned regardless of depth.
+
+**Diagnostics (item 0, run against the pre-fix code, all 585 tracks):**
+
+| Statistic | Value |
+|---|---|
+| eps_A/LB (polylines): p50 / p90 / p99 / max / frac exactly 1.0 | 1.0000 / 1.1611 / 2.0710 / 6.5847 / 0.817 |
+| 46 failures by check | monotonicity: 36, tube: 1, tube+monotonicity: 9 |
+| Tracks exceeding the rolling-DP threshold (`n*m > 5,000,000`) during S2 | 0/585 |
+
+**Unanticipated finding**: the raw chord-length/speed numbers for the 46 failures are physically
+absurd (mean chord ~2.4e13 m, speeds up to ~4.6e17 m/s) -- not a diagnostic bug. At least 26/46
+have a `fit_adaptive` spline fit with wildly unstable control points (confirmed directly: one
+track's control points span +-1e12 while the track itself is ~2km), a separate, pre-existing
+numerical-instability issue in `spline_lsq.py` (already flagged in its own docstring), out of
+scope for this fix. Classifying all 46 by whether the fit's control points stay within 100x the
+track's own extent: **26/46 unstable fits** (this fix can't help -- there is no reasonable
+certificate to find), **20/46 reasonable fits** (plausible genuine geometric edge cases this fix
+should address).
+
+**Fix**: `_certify_segment` now finds roots of `<C'(u), e>` relative to the *current* piece's own
+chord at every recursion level (not just once at the top), falling back to plain bisection when
+the chord is degenerate, no root exists, or every root is within `0.05` of an endpoint. That last
+guard was not part of the original design -- it was added after the mandatory 100-sample
+regression check (re-running S2 on previously-*passing* tracks) caught a real bug: root-splitting
+without it caused **51/100 regressions** (a root chasing progressively closer to one endpoint at
+every level, burning the recursion budget on a razor-thin sliver each time without shrinking the
+problematic remainder). After the boundary-margin fix: **0/100 regressions** (100/100 pass,
+re-verified). `_certified_ok` also gained the small-ball rule (certifies without checking
+monotonicity when the whole piece fits in a ball of diameter `<= lam`).
+
+**Re-validation results:**
+
+| Check | Result |
+|---|---|
+| 46 former failures, re-tested | **22/46 now get a finite certificate** (vs. 0/46 before) -- closely matches the 20/46 "reasonable fit" classification, confirming the fix targets genuine geometric cases, not the separate spline-instability issue; 24/46 still fallback |
+| Recursion depth, 46 tracks' worst segment, before (old algorithm) | mean 6.41, max 12 |
+| Recursion depth, 46 tracks' worst segment, after (new algorithm), split by outcome | now-certifying (22): mean 9.9, max 12; still-fallback (24): mean 12.0, max 12 (exhausts the budget, expected for genuinely unresolvable/unstable cases) |
+| Random 100-sample of previously-*passing* tracks, re-tested | **100/100 pass, 0 fallback** -- no regression |
+
+Depth alone understates the fix's value: the "now-certifying" cohort still averages a fairly deep
+9.9 levels (real GPS-derived geometry is noisier than the synthetic reversal test case, which
+resolves in 2), but the meaningful outcome is 22 tracks moving from *no certificate at any depth*
+to *a valid one* -- something the old algorithm could never produce regardless of `max_levels`.
+
+**Full-corpus re-run: not executed, per the timing budget.** The 100-sample took 703.0s
+(7.03s/track, includes root-finding overhead vs. the original algorithm) -- extrapolated to the
+full 585-track corpus, **~4113s (~68.5 minutes), exceeding the 40-minute budget**. Per the
+instruction to record this decision rather than force a long run blind: the full corpus was not
+re-run. Combining the confirmed no-regression 539 passes with the 22 newly-certifying tracks gives
+an **estimated (not directly verified) 561/585** S2 pass count post-fix -- reported as an estimate,
+not a fact, until an actual full run is done (a natural candidate for a background run in a future
+session, or with root-finding's overhead optimized first).

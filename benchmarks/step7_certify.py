@@ -382,11 +382,17 @@ def main() -> None:
 def _new_certify_segment_depth(seg, lam, levels_left, depth, state) -> bool:
     """Mirrors the actual (post-fix) traj.certify._certify_segment, instrumented
     to track max recursion depth -- for the before/after depth comparison on the
-    46 formerly-failing tracks. Imports the real _certified_ok/root-finding (not a
-    frozen copy, unlike the pre-fix diagnostics): this inspects the final,
-    maintained algorithm, so staying in sync with it is correct, not a liability.
+    46 formerly-failing tracks. Imports the real _certified_ok/root-finding AND
+    the real _BOUNDARY_MARGIN constant (not a frozen copy, unlike the pre-fix
+    diagnostics): this inspects the final, maintained algorithm, so staying in
+    sync with it is correct, not a liability -- an earlier version of this
+    duplicated the split-point selection without the boundary-margin guard,
+    silently going stale the moment that guard was added to fix a regression
+    (docs/reviews/step7_M1.md item 3's re-validation caught it: pass/fail counts
+    from the real certify_spline_linearization were correct throughout, only
+    this separate depth statistic was wrong).
     """
-    from traj.certify import _certified_ok, _projection_roots_in_unit_interval
+    from traj.certify import _BOUNDARY_MARGIN, _certified_ok, _projection_roots_in_unit_interval
 
     state["max_depth"] = max(state["max_depth"], depth)
     if _certified_ok(seg, lam):
@@ -399,8 +405,10 @@ def _new_certify_segment_depth(seg, lam, levels_left, depth, state) -> bool:
     if chord_len >= 1e-12:
         e = (b - a) / chord_len
         roots = _projection_roots_in_unit_interval(derivative_control_points(seg), e)
-        if roots:
-            split_t = roots[0]
+        for r in roots:
+            if _BOUNDARY_MARGIN <= r <= 1.0 - _BOUNDARY_MARGIN:
+                split_t = r
+                break
     left, right = de_casteljau_split(seg, split_t)
     ok_left = _new_certify_segment_depth(left, lam, levels_left - 1, depth + 1, state)
     ok_right = _new_certify_segment_depth(right, lam, levels_left - 1, depth + 1, state)

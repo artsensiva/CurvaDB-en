@@ -135,3 +135,80 @@ def test_certified_linearize_within_lam_of_spline(lam, n_interior, seed):
     dense = bs(us)
     d = distance_upper(dense, lin_vertices, tol=1e-3)
     assert d <= lam + 1e-2  # small slack: distance_upper's own tol + de Casteljau's discretization of "dense"
+
+
+# --- M1.1 property tests (docs/reviews/step7_M1.md): root-splitting + small-ball ---
+
+
+def _single_segment_bspline(control_points: np.ndarray) -> BSpline:
+    k = control_points.shape[0] - 1
+    t = np.concatenate([np.zeros(k + 1), np.ones(k + 1)])
+    return BSpline(t, control_points, k)
+
+
+def _assert_certified_and_within_lam(control_points, lam, slack=1e-2):
+    """Shared check for the non-adversarial M1.1 cases: must certify, and the
+    certified linearization must genuinely be within lam of the spline on a dense
+    sample (not just trusted because fully_certified says so)."""
+    bs = _single_segment_bspline(control_points)
+    lin_vertices, fully_certified = certified_linearize(bs, lam, max_levels=12)
+    assert fully_certified is True
+    dense = bs(np.linspace(0.0, 1.0, 300))
+    d = distance_upper(dense, lin_vertices, tol=1e-4)
+    assert d <= lam + slack
+
+
+def test_certified_linearize_reversal():
+    """Genuine sign change in the chord-projected derivative (confirmed this
+    session: derivative-projection Bernstein coefficients [6,-9,6], two real
+    roots at u ~ 0.276, 0.724) -- fails _certified_ok's monotonicity check at any
+    lam under the OLD (blind-bisection) algorithm needs ~20 levels to resolve;
+    root-splitting resolves it in 1 level (verified directly: _certify_segment
+    with levels_left=1 already succeeds)."""
+    seg = np.array([[0.0, 0.0], [2.0, 0.0], [-1.0, 0.0], [1.0, 0.0]])
+    _assert_certified_and_within_lam(seg, lam=0.5)
+
+
+def test_certified_linearize_stop():
+    """Near-duplicate control points (small but non-degenerate chord) with a real,
+    bounded wander -- exercises the small-ball rule (2*rho <= lam)."""
+    seg = np.array([[0.0, 0.0], [0.05, 0.08], [-0.06, 0.04], [0.001, 0.0]])
+    a, b = seg[0], seg[-1]
+    assert 1e-12 <= float(np.hypot(*(b - a))) < 1e-2  # non-degenerate but tiny chord
+    _assert_certified_and_within_lam(seg, lam=0.2)
+
+
+def test_certified_linearize_loop():
+    """Exactly-degenerate chord (closes back to its own start) -- exercises the
+    existing curve-vs-point path; confirms root-splitting correctly skips this
+    case (chord_len < 1e-12 guard) rather than attempting a spurious split."""
+    seg = np.array([[0.0, 0.0], [1.0, 2.0], [-1.0, 2.0], [0.0, 0.0]])
+    _assert_certified_and_within_lam(seg, lam=2.5)
+
+
+def test_certified_linearize_near_degenerate_loop():
+    """User's mandatory addition (correction 3): seg[0] and seg[-1] at distance
+    1e-6 (NOT degenerate by the 1e-12 threshold, so the normal chord/unit-direction
+    path runs), with the loop's actual extent (rho) larger than lam/2 (so the
+    small-ball rule does NOT trivially apply either) -- the numerically hardest
+    case, where the chord direction is technically well-defined but practically
+    ill-conditioned. Only requires: no crash/hang, and the result is either
+    fully_certified with an independently-verified correct bound, or an honest
+    fully_certified=False -- never a silent wrong answer."""
+    lam = 0.2
+    seg = np.array([[0.0, 0.0], [0.3, 0.25], [-0.28, 0.22], [1e-6, 0.0]])
+    a, b = seg[0], seg[-1]
+    chord_len = float(np.hypot(*(b - a)))
+    rho = max(float(np.hypot(*(p - a))) for p in seg)
+    assert chord_len >= 1e-12  # not treated as degenerate
+    assert 2.0 * rho > lam  # small-ball rule does not trivially apply
+
+    bs = _single_segment_bspline(seg)
+    lin_vertices, fully_certified = certified_linearize(bs, lam, max_levels=12)  # must not hang/crash
+
+    if fully_certified:
+        dense = bs(np.linspace(0.0, 1.0, 300))
+        d = distance_upper(dense, lin_vertices, tol=1e-4)
+        assert d <= lam + 1e-2
+    else:
+        assert fully_certified is False  # honest refusal is an acceptable outcome

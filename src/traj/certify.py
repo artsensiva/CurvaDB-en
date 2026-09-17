@@ -72,50 +72,146 @@ def certify_polyline(A: np.ndarray, kept_indices: np.ndarray, eta: float = 1e-3)
     return eps_A
 
 
-def _tube_and_monotone_ok(control_points: np.ndarray, radius: float) -> bool:
-    """Spec section 2.3's test (reused as-is by section 2.4), applied to a Bezier
-    segment's own chord (its first-to-last control point): tube condition -- every
-    control point within `radius` of the chord; monotonicity condition -- every
-    derivative control point's dot product with the chord's unit direction is
-    >= 0 (a small numerical tolerance absorbs float noise at the boundary)."""
+def _bernstein_to_power(coeffs: np.ndarray) -> np.ndarray:
+    """Scalar Bernstein coefficients (degree n) -> standard power-basis coefficients
+    (ascending order): a_j = C(n,j) * sum_{i=0}^{j} (-1)^(i+j) * C(j,i) * coeffs[i].
+    Closed form, well-conditioned at the low degrees used here (degree <= ~2, since
+    a cubic spline's derivative is quadratic)."""
+    from scipy.special import comb
+
+    n = len(coeffs) - 1
+    power = np.zeros(n + 1)
+    for j in range(n + 1):
+        s = 0.0
+        for i in range(j + 1):
+            s += (-1) ** (i + j) * comb(j, i) * coeffs[i]
+        power[j] = comb(n, j) * s
+    return power
+
+
+def _eval_scalar_bernstein(coeffs: np.ndarray, u: float) -> float:
+    cur = np.asarray(coeffs, dtype=float)
+    while len(cur) > 1:
+        cur = (1.0 - u) * cur[:-1] + u * cur[1:]
+    return float(cur[0])
+
+
+def _projection_roots_in_unit_interval(deriv_control_points: np.ndarray, e: np.ndarray) -> list[float]:
+    """Real roots of <C'(u), e> = 0 for u in (0,1), where C' is the Bezier curve
+    (deriv_control_points, degree p-1) and e is a fixed unit direction. Converts
+    the scalar Bernstein coefficients deriv_control_points @ e to the power basis
+    and finds roots via numpy.roots; each candidate is verified by re-evaluating
+    the ORIGINAL Bernstein form via de Casteljau (_eval_scalar_bernstein), rejecting
+    spurious roots from basis-conversion noise. Used ONLY to pick split points in
+    _certify_segment -- never a substitute for _certified_ok's own check."""
+    scalar_coeffs = deriv_control_points @ e
+    n = len(scalar_coeffs) - 1
+    if n < 1 or not np.any(scalar_coeffs - scalar_coeffs[0]):
+        return []
+
+    power_coeffs = _bernstein_to_power(scalar_coeffs)
+    if not np.any(power_coeffs[1:]):
+        return []
+
+    raw_roots = np.roots(power_coeffs[::-1])
+    scale = max(float(np.max(np.abs(scalar_coeffs))), 1e-300)
+    roots = []
+    for r in raw_roots:
+        if abs(r.imag) > 1e-9 * max(abs(r.real), 1.0):
+            continue
+        u = float(r.real)
+        if not (1e-9 < u < 1.0 - 1e-9):
+            continue
+        if abs(_eval_scalar_bernstein(scalar_coeffs, u)) > 1e-6 * scale:
+            continue
+        roots.append(u)
+    return sorted(roots)
+
+
+def _certified_ok(control_points: np.ndarray, lam: float) -> bool:
+    """The ONLY function that certifies a Bezier piece. Exactly one of:
+
+      - degenerate chord (|seg[-1]-seg[0]| < 1e-12): curve vs POINT -- all control
+        points within lam of seg[0] (there is no direction to test monotonicity
+        against, so this replaces both the tube and monotonicity conditions).
+      - small-ball rule: rho = max_i |P_i - P_0|; if 2*rho <= lam, certified
+        without checking monotonicity at all. Every point on the piece AND every
+        point on its own chord lies within rho of P_0 (control points bound the
+        convex hull, and P_0 is on the chord by construction), so ANY pairing
+        between a curve point and a chord point -- monotone or not -- is at most
+        2*rho apart; 2*rho <= lam makes this valid regardless of monotonicity,
+        exactly where a chord direction is meaningless (near-stationary segments).
+      - tube AND monotonicity (spec section 2.3's test): every control point
+        within lam of the chord [seg[0], seg[-1]], AND every Bernstein coefficient
+        of <C'(u), e> (e = the chord's own unit direction) is >= 0 -- a sufficient
+        condition for the projection along e to be non-decreasing over the whole
+        piece (small numerical tolerance absorbs float noise at the boundary).
+
+    Root-finding (_projection_roots_in_unit_interval) is used ONLY by
+    _certify_segment to choose good split points -- it is NEVER treated as a
+    substitute for this check. A piece is certified only when THIS function says
+    so, regardless of how many roots were found or splits taken to reach it.
+    """
     a, b = control_points[0], control_points[-1]
     chord_vec = b - a
     chord_len = float(np.hypot(*chord_vec))
 
     if chord_len < 1e-12:
-        # degenerate chord: tube test against the single point a; monotonicity is
-        # vacuous (there's no direction to project onto).
-        return bool(np.all(np.hypot(*(control_points - a).T) <= radius))
+        return bool(np.all(np.hypot(*(control_points - a).T) <= lam))
 
-    e = chord_vec / chord_len
+    rho = max(float(np.hypot(*(p - a))) for p in control_points)
+    if 2.0 * rho <= lam:
+        return True
+
     for p in control_points:
         d = b - a
         len2 = float(d @ d)
         tt = np.clip(float((p - a) @ d) / len2, 0.0, 1.0)
         closest = a + tt * d
-        if float(np.hypot(*(p - closest))) > radius:
+        if float(np.hypot(*(p - closest))) > lam:
             return False
 
+    e = chord_vec / chord_len
     deriv = derivative_control_points(control_points)
     return bool(np.all(deriv @ e >= -1e-9 * max(chord_len, 1.0)))
 
 
 def _certify_segment(seg: np.ndarray, lam: float, levels_left: int) -> tuple[list[np.ndarray], bool]:
-    if _tube_and_monotone_ok(seg, lam):
+    """Recursively certifies a Bezier piece against _certified_ok. On failure,
+    splits at a root of <C'(u), e> relative to THIS piece's OWN chord (not the
+    original top-level segment's) -- monotonicity along one chord does not imply
+    monotonicity along a different sub-piece's own chord, so root-finding must be
+    redone at every level, relative to whatever chord that level's _certified_ok
+    check just failed against. Falls back to a plain t=0.5 bisection when the
+    chord is degenerate or no interior root is found (the original strategy,
+    still needed as a safety net)."""
+    if _certified_ok(seg, lam):
         return [seg[-1]], True
     if levels_left == 0:
         return [seg[-1]], False
-    left, right = de_casteljau_split(seg, 0.5)
+
+    a, b = seg[0], seg[-1]
+    chord_len = float(np.hypot(*(b - a)))
+    split_t = 0.5
+    if chord_len >= 1e-12:
+        e = (b - a) / chord_len
+        roots = _projection_roots_in_unit_interval(derivative_control_points(seg), e)
+        if roots:
+            split_t = roots[0]  # any remaining roots are rediscovered relative to
+            # each half's own new chord, in the recursive calls below
+
+    left, right = de_casteljau_split(seg, split_t)
     lv, lok = _certify_segment(left, lam, levels_left - 1)
     rv, rok = _certify_segment(right, lam, levels_left - 1)
     return lv + rv, lok and rok
 
 
 def certified_linearize(bs: BSpline, lam: float, max_levels: int = 12) -> tuple[np.ndarray, bool]:
-    """Spec section 2.4: linearizes spline bs into a polyline Lin(A') by recursive
-    de Casteljau subdivision (up to max_levels) of each Bezier segment, until it
-    satisfies both the tube (within lam of its own chord) and monotonicity
-    conditions (spec section 2.3's test, applied here to the segment's own chord).
+    """Spec section 2.4: linearizes spline bs into a polyline Lin(A') by recursively
+    certifying each Bezier segment (see _certify_segment/_certified_ok) against
+    lam, splitting at roots of the chord-projected derivative where possible
+    (falling back to plain de Casteljau bisection at t=0.5 otherwise), up to
+    max_levels.
 
     Returns (vertices, fully_certified). fully_certified=False if some segment still
     fails after max_levels subdivisions (spec's documented "not certified" outcome)

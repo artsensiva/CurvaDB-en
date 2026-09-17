@@ -1,5 +1,6 @@
-"""Tests for traj.certify: section 2.2 (exact polyline certificate) and section 2.4
-(certified linearization, the spline fallback path), per
+"""Tests for traj.certify: section 2.2 (exact polyline certificate), section 2.3
+(monotone projection-matching spline certificate, M2), and section 2.4 (certified
+linearization, the spline fallback path, M1), per
 docs/specs/step7_B_certified_store.md. Fast/small-scale here; the full-corpus S1/S2
 validation lives in benchmarks/step7_certify.py (spec section 5's own file layout)."""
 
@@ -11,9 +12,12 @@ from hypothesis import strategies as st
 from scipy.interpolate import BSpline, make_lsq_spline
 
 from traj.certify import (
+    _certify_projection_piece,
     certified_linearize,
     certify_polyline,
+    certify_spline,
     certify_spline_linearization,
+    certify_spline_projection,
     hausdorff_lower_bound,
 )
 from traj.frechet_cont import distance_upper
@@ -215,3 +219,118 @@ def test_certified_linearize_near_degenerate_loop():
         assert d <= lam + 1e-2
     else:
         assert fully_certified is False  # honest refusal is an acceptable outcome
+
+
+# --- M2 property tests (spec section 9): section 2.3, monotone projection matching ---
+
+
+def _random_spline(rng: np.random.Generator, k: int = 3, n_interior: int = 4):
+    interior = np.sort(rng.uniform(1.0, 9.0, n_interior)) if n_interior > 0 else np.empty(0)
+    knots = np.concatenate([np.full(k + 1, 0.0), interior, np.full(k + 1, 10.0)])
+    n_ctrl = len(knots) - k - 1
+    c = rng.random((n_ctrl, 2)) * 20.0 - 10.0
+    return BSpline(knots, c, k)
+
+
+@given(
+    n_interior=st.integers(min_value=0, max_value=5),
+    n_points=st.integers(min_value=4, max_value=15),
+    noise=st.floats(min_value=0.0, max_value=1.0, allow_nan=False),
+    seed=st.integers(min_value=0, max_value=2**31 - 1),
+)
+@_settings
+def test_certify_spline_projection_matches_dense_sampling(n_interior, n_points, noise, seed):
+    """spec section 9: for a certified piece, the explicit correspondence (spec
+    2.3 item 3's clamp formula), sampled densely by parameter, has cost <= eps_A;
+    independently, the sampled projection s(u) is non-decreasing (spec 2.3 item 2's
+    monotonicity condition, checked here directly on samples, not just via the
+    analytic Bernstein-coefficient argument certify_spline_projection used)."""
+    rng = np.random.default_rng(seed)
+    bs = _random_spline(rng, n_interior=n_interior)
+    t_pts = np.linspace(0.0, 10.0, n_points)
+    A = np.asarray(bs(t_pts)) + rng.normal(0.0, noise, (n_points, 2))
+
+    res = certify_spline_projection(A, bs, max_levels=12)
+
+    for p in res.pieces:
+        if p.u_k1 <= p.u_k or p.L_k < 1e-12 or not p.certified:
+            continue
+        V_k = A[p.k]
+        e_k, L_k = p.e_k, p.L_k
+        grid = np.linspace(p.u_k, p.u_k1, 300)
+        prev_s = None
+        for u in grid:
+            Cu = np.asarray(bs(u))
+            s = float((Cu - V_k) @ e_k)
+            if prev_s is not None:
+                assert s >= prev_s - 1e-6 * max(L_k, 1.0)
+            prev_s = s
+            matched = V_k + float(np.clip(s, 0.0, L_k)) * e_k
+            cost = float(np.hypot(*(Cu - matched)))
+            assert cost <= res.eps_A + 1e-6
+
+
+@given(n_interior=st.integers(min_value=0, max_value=5), n_points=st.integers(min_value=4, max_value=15), seed=st.integers(min_value=0, max_value=2**31 - 1))
+@_settings
+def test_certify_spline_never_returns_finite_eps_a_when_uncertified(n_interior, n_points, seed):
+    """certify_spline's contract: either a method succeeded (2.3 or 2.4 fallback)
+    with a finite eps_A, or even the fallback failed (2.4_fallback_uncertified)
+    and eps_A is inf -- never a finite number without a method that backs it."""
+    rng = np.random.default_rng(seed)
+    bs = _random_spline(rng, n_interior=n_interior)
+    t_pts = np.linspace(0.0, 10.0, n_points)
+    A = np.asarray(bs(t_pts)) + rng.normal(0.0, 0.5, (n_points, 2))
+
+    eps_A, method = certify_spline(A, bs, max_levels=12)
+    assert method in ("2.3", "2.4_fallback", "2.4_fallback_uncertified")
+    if method == "2.4_fallback_uncertified":
+        assert eps_A == float("inf")
+    else:
+        assert 0.0 <= eps_A < float("inf")
+
+
+def test_certify_projection_piece_degenerate_point_vs_segment():
+    """Mandatory correction 2: u_k == u_{k+1} (the correspondence search's
+    monotonicity clamp bound it -- e.g. two source vertices very close together
+    relative to the spline's own curvature). The piece degenerates to the single
+    spline point C(u_k) matched against the WHOLE segment S_k; cost must equal
+    the exact max(|C(u_k)-V_k|, |C(u_k)-V_{k+1}|), and every point on S_k must be
+    within that cost of C(u_k) (this piece's own dense-sampling check, since S_k
+    itself has no interior parameter to vary)."""
+    bs = _random_spline(np.random.default_rng(11), n_interior=3)
+    A = np.array([[0.0, 0.0], [3.0, 4.0], [3.5, 4.2], [10.0, 0.0]])
+    u = np.array([0.0, 0.2, 0.2, 10.0])  # u_1 == u_2 by construction
+    delta = np.array([float(np.hypot(*(np.asarray(bs(uu)) - A[i]))) for i, uu in enumerate(u)])
+
+    p = _certify_projection_piece(bs, A, u, delta, 1, max_levels=12)
+    assert p.degenerate == "point_vs_segment"
+    assert p.certified is True
+
+    Cu = np.asarray(bs(u[1]))
+    V_k, V_k1 = A[1], A[2]
+    expected = max(float(np.hypot(*(Cu - V_k))), float(np.hypot(*(Cu - V_k1))))
+    assert abs(p.cost - expected) < 1e-9
+    for tt in np.linspace(0.0, 1.0, 50):
+        Q = V_k + tt * (V_k1 - V_k)
+        assert float(np.hypot(*(Q - Cu))) <= p.cost + 1e-9
+
+
+def test_certify_projection_piece_degenerate_curve_vs_point():
+    """Mandatory correction 2: |S_k| < 1e-12 (two coincident source vertices).
+    The piece is matched against the single point V_k; cost must equal
+    max_i |P_i - V_k| over every control point of every leaf Bezier segment in
+    the piece, and this must genuinely bound the dense-sampled curve-to-point
+    distance across the whole piece (this piece's own dense-sampling check)."""
+    bs = _random_spline(np.random.default_rng(5), n_interior=3)
+    A = np.array([[0.0, 0.0], [2.0, 3.0], [2.0, 3.0], [10.0, 0.0]])  # V_1 == V_2
+    u = np.array([0.0, 0.3, 0.7, 10.0])  # u_1 != u_2 -- a genuine curve extent
+    delta = np.array([float(np.hypot(*(np.asarray(bs(uu)) - A[i]))) for i, uu in enumerate(u)])
+
+    p = _certify_projection_piece(bs, A, u, delta, 1, max_levels=12)
+    assert p.degenerate == "curve_vs_point"
+    assert p.certified is True
+
+    V_k = A[1]
+    for uu in np.linspace(u[1], u[2], 300):
+        Cu = np.asarray(bs(uu))
+        assert float(np.hypot(*(Cu - V_k))) <= p.cost + 1e-9

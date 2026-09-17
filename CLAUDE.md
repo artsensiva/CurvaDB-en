@@ -29,3 +29,12 @@ or extended.
 - Acceptance sections in docs/specs/ must never be edited during a phase.
 - Products P1-P4 are NOT implemented in this repository; they get their own repositories when their gates open.
 - Do not launch background exploration or planning agents unless explicitly asked; read the files named in the spec directly. This saves the session limit.
+
+## Documentation rules
+- Technical decisions go to docs/decisions/ADR-NNNN-<slug>.md (context, options, decision,
+  consequences incl. effect on guarantees, status, links). Write or update the ADR in the same
+  commit as the code change. Never delete a superseded ADR: set status "Superseded by ADR-XXXX".
+- Every milestone section in benchmarks/results/ ends with a "Conclusions" block: results vs
+  criteria, what we now know, decisions (ADR links), open issues (TODO or next milestone links).
+- At each gate, write docs/phases/<phase>_summary.md (one page) and link it from docs/ROADMAP.md section 8.
+- Do not report estimates as results: label them "estimate, not verified" and run the check.

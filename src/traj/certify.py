@@ -1,17 +1,22 @@
 """Certificates for the certified curve store (docs/specs/step7_B_certified_store.md
-section 2.2, exact polyline certificate; section 2.4, certified linearization -- the
-spline fallback path). Built on traj.frechet_cont.distance_upper, the only function
-used for certificates (traj.frechet_cont.distance is a general-purpose, non-verified
-bound -- see its own docstring; certificates need distance_upper's independently
-re-verified guarantee).
+section 2.2, exact polyline certificate; section 2.3, monotone projection-matching
+spline certificate -- the primary spline path, M2; section 2.4, certified
+linearization -- the spline fallback path, M1). Built on
+traj.frechet_cont.distance_upper, the only function used for polyline-vs-polyline
+certificates (traj.frechet_cont.distance is a general-purpose, non-verified bound --
+see its own docstring; certificates need distance_upper's independently re-verified
+guarantee). Section 2.3 needs no such bisection: its bound is a direct, measured
+construction (see certify_spline_projection).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 import numpy as np
 from scipy.interpolate import BSpline
 
-from traj.bezier import bezier_segments, de_casteljau_split, derivative_control_points
+from traj.bezier import bezier_segments, bezier_segments_in_range, de_casteljau_split, derivative_control_points
 from traj.frechet_cont import distance_upper
 
 _MACHINE_EPS = float(np.finfo(np.float64).eps)
@@ -274,6 +279,319 @@ def certify_spline_linearization(
     d = distance_upper(A, lin_vertices, tol=eta)
     eps_A = _with_margins(d, A[0], _bbox_diagonal(A)) + lam
     return eps_A, True
+
+
+# --- Section 2.3: monotone projection-matching certificate (M2, primary spline path) -------
+
+_NEWTON_MAX_ITER = 20
+_NEWTON_BACKTRACK_MAX = 20
+_NEWTON_TOL_FRAC = 1e-13  # relative to the search range's own width
+_COARSE_SCAN_POINTS = 50  # candidates evaluated before Newton refines, see ADR-0015
+
+
+def _nearest_point_on_spline(bs: BSpline, target: np.ndarray, u_lo: float, u_hi: float, u_guess: float) -> float:
+    """Local nearest-point search for `target` on `bs`, restricted to `[u_lo, u_hi]`
+    (spec 2.3 item 1's monotonicity constraint `u_{k-1} <= u_k`), started from
+    `u_guess` (the previous vertex's own `u`). Newton's method on
+    `f(u) = |C(u)-target|^2` (`f' = 2*(C(u)-target)@C'(u)`, `f'' =
+    2*(C'@C' + (C(u)-target)@C'')`, `C`/`C'`/`C''` via scipy's own `bs(u, nu=...)`),
+    clamped into `[u_lo, u_hi]` at every step -- this is what actually GUARANTEES
+    monotonicity (`u_k` can never leave the range), not any property of Newton's
+    method itself.
+
+    **Safeguarded (backtracking) Newton, not plain Newton** (ADR-0015): plain
+    clamped Newton was tried first and found to occasionally overshoot wildly (a
+    tiny second derivative near an inflection produces a huge step), clamp to a
+    range boundary, and then falsely "converge" there on the very next iteration
+    (the post-clip position stops changing, tripping the step-size convergence
+    check) even though that boundary is a much WORSE point than where it started
+    -- confirmed directly on a real track: four consecutive vertices collapsed to
+    the same early `u`, then the next vertex's search jumped all the way to
+    `u_hi=1.0` this way, producing a piece spanning nearly the entire spline and
+    taking >100x longer to (fail to) certify. Fixed by only ever ACCEPTING a
+    Newton step that does not increase the squared residual (backtracking:
+    halve the step up to `_NEWTON_BACKTRACK_MAX` times otherwise); since the
+    search always starts at `u_guess = u_lo` (the caller's own convention), the
+    result can never be worse than `u_lo` itself by construction -- no separate
+    "compare against boundaries" fallback is needed.
+
+    Not guaranteed to find the range-global nearest point -- irrelevant to the
+    resulting certificate's VALIDITY, which only needs an honestly measured
+    `delta_k = |C(u_k)-target|` for whichever `u_k` this returns (recomputed
+    independently by the caller, never trusted from this function's own internal
+    state). It DOES matter for how USEFUL (tight) the certificate ends up, though:
+    starting Newton from `u_guess` alone, even safeguarded, can get trapped in a
+    poor local optimum indefinitely -- confirmed directly (a real track's vertex
+    20 had a true nearest point at distance 0.34, but Newton from the previous
+    vertex's own (already-stuck) `u` converged to a "local optimum" at distance
+    83, since the real minimum sits in a completely different, unconnected basin
+    of the squared-distance function -- a purely local method can never cross
+    into it). A coarse pre-scan (`_COARSE_SCAN_POINTS` evenly spaced samples
+    across `[u_lo, u_hi]`, picking the best as Newton's actual starting point)
+    fixes this cheaply: it costs a fixed number of extra spline evaluations per
+    vertex regardless of the remaining range's size, and reliably finds the right
+    basin before Newton refines within it.
+    """
+    grid = np.linspace(u_lo, u_hi, _COARSE_SCAN_POINTS)
+    grid_vals = np.asarray(bs(grid))
+    grid_dist2 = np.sum((grid_vals - target) ** 2, axis=1)
+    best_grid_u = float(grid[int(np.argmin(grid_dist2))])
+
+    u_guess_clamped = float(np.clip(u_guess, u_lo, u_hi))
+    guess_dist2 = float(np.hypot(*(np.asarray(bs(u_guess_clamped)) - target))) ** 2
+    if float(grid_dist2.min()) <= guess_dist2:
+        u = best_grid_u
+        f_val = float(grid_dist2.min())
+    else:
+        u = u_guess_clamped
+        f_val = guess_dist2
+    tol = _NEWTON_TOL_FRAC * max(u_hi - u_lo, 1.0)
+
+    for _ in range(_NEWTON_MAX_ITER):
+        diff = np.asarray(bs(u)) - target
+        Cp = np.asarray(bs(u, 1))
+        f1 = 2.0 * float(diff @ Cp)
+        Cpp = np.asarray(bs(u, 2))
+        f2 = 2.0 * (float(Cp @ Cp) + float(diff @ Cpp))
+        if abs(f2) < 1e-300:
+            break
+
+        step = f1 / f2
+        accepted = False
+        u_new = u
+        f_new = f_val
+        for _ in range(_NEWTON_BACKTRACK_MAX):
+            u_new = float(np.clip(u - step, u_lo, u_hi))
+            f_new = float(np.hypot(*(np.asarray(bs(u_new)) - target))) ** 2
+            if f_new <= f_val + 1e-14 * max(f_val, 1.0):
+                accepted = True
+                break
+            step *= 0.5
+        if not accepted:
+            break
+
+        converged = abs(u_new - u) < tol
+        u, f_val = u_new, f_new
+        if converged:
+            break
+
+    return u
+
+
+def _correspondence_points(A: np.ndarray, bs: BSpline) -> np.ndarray:
+    """Spec 2.3 item 1: u_0 = bs.t[0], u_n = bs.t[-1] (fixed to the spline's own
+    domain bounds -- not searched), and for 0 < k < n, u_k is the (heuristic)
+    nearest point to V_k found via _nearest_point_on_spline starting from
+    u_{k-1}, monotone by construction (searched within [u_{k-1}, u_n])."""
+    n = len(A) - 1
+    u_min, u_max = float(bs.t[0]), float(bs.t[-1])
+    u = np.empty(n + 1)
+    u[0] = u_min
+    u[n] = u_max
+    for k in range(1, n):
+        u[k] = _nearest_point_on_spline(bs, A[k], u[k - 1], u_max, u[k - 1])
+    return u
+
+
+def _certify_projection_segment(
+    seg: np.ndarray, e_k: np.ndarray, tol_scale: float, levels_left: int
+) -> tuple[list[np.ndarray], bool]:
+    """Recursively certifies a Bezier piece's MONOTONICITY relative to a FIXED
+    direction e_k (spec 2.3 item 2's monotonicity condition: every control point of
+    the piece's derivative has <., e_k> >= 0). Unlike _certify_segment (section 2.4),
+    e_k is NEVER re-derived from a sub-piece's own endpoints -- 2.3 certifies against
+    the ORIGINAL track's fixed segment S_k, so the direction being tested against
+    must stay constant across every split (ADR-0016). There is no separate "tube"
+    gate here (unlike 2.4's `lam`-threshold tube): the tube radius rho_k is MEASURED
+    after monotonicity is achieved (see _certify_projection_piece), not tested
+    against a target -- so this function only ever needs to fail on monotonicity,
+    never on a tube condition.
+
+    Splits at a root of <C'(u), e_k> = 0 when one exists usefully placed (reusing
+    _projection_roots_in_unit_interval and the same _BOUNDARY_MARGIN guard as 2.4,
+    for the same reason: a root too close to an endpoint causes the same
+    razor-thin-sliver pathology ADR-0008 found).
+
+    **Early-exit when no interior root exists** (found necessary empirically,
+    ADR-0016): unlike 2.4, where the reference direction is RE-DERIVED from each
+    sub-piece's own endpoints (so a different chord can succeed where the parent
+    failed), 2.3's e_k is FIXED across every split. If the scalar polynomial
+    <C'(u), e_k> has no root in the open interval, it is (barring a measure-zero
+    tangency) one sign throughout -- and since the check above already failed, that
+    sign is negative EVERYWHERE on this segment. De Casteljau splitting a curve
+    that is uniformly one sign produces two children that are ALSO uniformly that
+    same sign (subdivision reparametrizes, it cannot introduce a sign change where
+    none exists) -- recursing further is not "trying harder", it is guaranteed,
+    provable failure, confirmed to previously burn the full max_levels budget on
+    real tracks (>1s per such piece; a track can have a dozen+, making a 585-track
+    corpus run intractable). Bailing out immediately changes nothing about
+    correctness (a real, un-splittable backward excursion -- spec section 10's
+    "loop relative to the segment" -- was always going to return False; this just
+    stops paying for the wasted subdivisions first).
+    """
+    deriv = derivative_control_points(seg)
+    if bool(np.all(deriv @ e_k >= -1e-9 * tol_scale)):
+        return [seg], True
+    if levels_left == 0:
+        return [seg], False
+
+    roots = _projection_roots_in_unit_interval(deriv, e_k)
+    split_t = None
+    for r in roots:
+        if _BOUNDARY_MARGIN <= r <= 1.0 - _BOUNDARY_MARGIN:
+            split_t = r
+            break
+    if split_t is None:
+        if not roots:
+            return [seg], False
+        split_t = 0.5
+
+    left, right = de_casteljau_split(seg, split_t)
+    lv, lok = _certify_projection_segment(left, e_k, tol_scale, levels_left - 1)
+    rv, rok = _certify_projection_segment(right, e_k, tol_scale, levels_left - 1)
+    return lv + rv, lok and rok
+
+
+@dataclass
+class _PieceResult:
+    """Per-piece diagnostics for one k in certify_spline_projection -- used both by
+    the property tests (dense-resampling verification) and the M2 benchmark's
+    fallback-rate/tube-radius reporting."""
+
+    k: int
+    u_k: float
+    u_k1: float
+    e_k: np.ndarray
+    L_k: float
+    degenerate: str | None  # None | "curve_vs_point" | "point_vs_segment" | "point_vs_point"
+    rho: float
+    tails: float
+    cost: float
+    certified: bool
+
+
+def _certify_projection_piece(bs: BSpline, A: np.ndarray, u: np.ndarray, delta: np.ndarray, k: int, max_levels: int) -> _PieceResult:
+    """One piece of spec 2.3 item 2-4: certifies piece k (parameter range
+    [u_k, u_{k+1}]) against segment S_k=[V_k,V_{k+1}], handling BOTH degenerate
+    cases explicitly (never silently wrong, never a crash):
+
+      - |S_k| < 1e-12 (coincident source vertices, spec's own edge case): matches
+        the whole piece against the single point V_k -- cost bounded by the max
+        distance from any control point of any leaf Bezier segment in the piece to
+        V_k (mirrors _certified_ok's existing degenerate-chord branch; no direction
+        to test monotonicity against, so no subdivision is attempted).
+      - u_k == u_{k+1} (Newton's monotonicity clamp bound the search -- e.g. two
+        source vertices very close together relative to the spline's own
+        curvature): the piece degenerates to the single spline point C(u_k)
+        matched against the WHOLE segment S_k -- cost is exactly
+        max(|C(u_k)-V_k|, |C(u_k)-V_{k+1}|) (distance from a fixed point to a
+        segment is maximized at an endpoint, so this is exact, not a bound).
+
+    Both degenerate branches are unconditionally valid (no subdivision budget to
+    exhaust), so certified=True always for them; the general case can fail
+    (certified=False) if max_levels is exhausted before every leaf Bezier segment's
+    derivative achieves monotonicity relative to e_k.
+    """
+    V_k, V_k1 = A[k], A[k + 1]
+    u_k, u_k1 = float(u[k]), float(u[k + 1])
+    S_k = V_k1 - V_k
+    L_k = float(np.hypot(*S_k))
+
+    if L_k < 1e-12:
+        if u_k1 <= u_k:
+            cost = float(np.hypot(*(np.asarray(bs(u_k)) - V_k)))
+            return _PieceResult(k, u_k, u_k1, np.zeros(2), L_k, "point_vs_point", 0.0, cost, cost, True)
+        max_dist = 0.0
+        for seg in bezier_segments_in_range(bs, u_k, u_k1):
+            max_dist = max(max_dist, float(np.max(np.hypot(*(seg - V_k).T))))
+        return _PieceResult(k, u_k, u_k1, np.zeros(2), L_k, "curve_vs_point", 0.0, max_dist, max_dist, True)
+
+    e_k = S_k / L_k
+
+    if u_k1 <= u_k:
+        Cu = np.asarray(bs(u_k))
+        cost = max(float(np.hypot(*(Cu - V_k))), float(np.hypot(*(Cu - V_k1))))
+        return _PieceResult(k, u_k, u_k1, e_k, L_k, "point_vs_segment", 0.0, cost, cost, True)
+
+    tol_scale = max(L_k, 1.0)
+    leaves: list[np.ndarray] = []
+    certified = True
+    for seg in bezier_segments_in_range(bs, u_k, u_k1):
+        leaf, ok = _certify_projection_segment(seg, e_k, tol_scale, max_levels)
+        leaves.extend(leaf)
+        certified = certified and ok
+
+    rho = 0.0
+    for leaf in leaves:
+        for p in leaf:
+            tt = float(np.clip(float((p - V_k) @ S_k) / (L_k * L_k), 0.0, 1.0))
+            closest = V_k + tt * S_k
+            rho = max(rho, float(np.hypot(*(p - closest))))
+
+    delta_k, delta_k1 = float(delta[k]), float(delta[k + 1])
+    s_uk = float((np.asarray(bs(u_k)) - V_k) @ e_k)
+    s_uk1 = float((np.asarray(bs(u_k1)) - V_k) @ e_k)
+    tails = max(delta_k, delta_k1, abs(s_uk) + delta_k, abs(L_k - s_uk1) + delta_k1)
+    cost = max(rho, tails)
+    return _PieceResult(k, u_k, u_k1, e_k, L_k, None, rho, tails, cost, certified)
+
+
+@dataclass
+class ProjectionResult:
+    eps_A: float
+    fully_certified: bool
+    pieces: list[_PieceResult] = field(default_factory=list)
+    u: np.ndarray = field(default_factory=lambda: np.empty(0))
+    delta: np.ndarray = field(default_factory=lambda: np.empty(0))
+
+
+def certify_spline_projection(A: np.ndarray, bs: BSpline, eta: float = 1e-3, max_levels: int = 12) -> ProjectionResult:
+    """Spec section 2.3: an explicit monotone correspondence between the spline
+    `bs` and the ORIGINAL polyline `A`, built piece by piece against each of `A`'s
+    own segments (unlike section 2.4, which linearizes the spline into its OWN
+    polyline first). `eta` is the numerical slack (relative to each piece's own
+    segment length) used only in the monotonicity check's `>= 0` comparison, not a
+    bisection tolerance (there is none here -- see module docstring).
+
+    eps_A = max_k(piece_cost_k) + 64*eps_machine*bbox_diagonal(A) (ADR-0016's tails
+    formula per piece, spec 2.3 item 4, plus this module's usual rounding margin).
+    fully_certified=False if any piece's Bezier segments can't all be shown monotone
+    relative to that piece's fixed e_k within max_levels -- callers must fall back to
+    certify_spline_linearization (2.4) for the WHOLE track in that case (spec 2.3
+    item 5's own documented "not certified -> fallback" outcome; certify_spline does
+    this automatically).
+    """
+    A = np.ascontiguousarray(A, dtype=np.float64)
+    n = len(A) - 1
+    if n < 1:
+        raise ValueError("A must have at least 2 vertices")
+
+    u = _correspondence_points(A, bs)
+    delta = np.array([float(np.hypot(*(np.asarray(bs(u[k])) - A[k]))) for k in range(n + 1)])
+
+    pieces = [_certify_projection_piece(bs, A, u, delta, k, max_levels) for k in range(n)]
+    fully_certified = all(p.certified for p in pieces)
+    raw_eps_A = max((p.cost for p in pieces), default=0.0)
+    eps_A = raw_eps_A + 64.0 * _MACHINE_EPS * _bbox_diagonal(A)
+    return ProjectionResult(eps_A=eps_A, fully_certified=fully_certified, pieces=pieces, u=u, delta=delta)
+
+
+def certify_spline(
+    A: np.ndarray, bs: BSpline, eta: float = 1e-3, lam_fallback: float = 0.1, max_levels: int = 12
+) -> tuple[float, str]:
+    """Spec section 2.3 (primary), falling back to section 2.4 for the WHOLE track
+    when 2.3 can't fully certify (spec's own documented risk, section 10 -- splines
+    that loop relative to some original segment). Returns (eps_A, method), method
+    in ("2.3", "2.4_fallback", "2.4_fallback_uncertified") -- the last meaning even
+    the fallback couldn't certify (eps_A is inf, per certify_spline_linearization's
+    own contract)."""
+    result = certify_spline_projection(A, bs, eta=eta, max_levels=max_levels)
+    if result.fully_certified:
+        return result.eps_A, "2.3"
+    eps_A, ok = certify_spline_linearization(A, bs, lam_fallback, eta=eta, max_levels=max_levels)
+    if not ok:
+        return float("inf"), "2.4_fallback_uncertified"
+    return eps_A, "2.4_fallback"
 
 
 def hausdorff_lower_bound(A: np.ndarray, A_prime: np.ndarray) -> float:

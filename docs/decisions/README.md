@@ -55,3 +55,5 @@ Commits, reports (`benchmarks/results/step7.md`), reviews (`docs/reviews/`), oth
 | [0012](ADR-0012-s2-invalid-fit-threshold-sensitivity.md) | S2 invalid-fit rate is a fitter property, not a threshold-calibration artifact | Superseded by ADR-0014 |
 | [0013](ADR-0013-spline-fit-for-s2.md) | Spec deviation: compare `spline.fit()` against `spline_lsq` for S2 | Accepted |
 | [0014](ADR-0014-dense-error-domain-bug.md) | `dense_max_error`'s parametrization-domain bug (ADR-0010/ADR-0012's numbers invalid) | Accepted |
+| [0015](ADR-0015-correspondence-point-search.md) | Correspondence-point search for section 2.3 (coarse scan + safeguarded Newton) | Accepted |
+| [0016](ADR-0016-projection-certificate-structure.md) | Section 2.3 certificate structure (fixed direction, measured tube, early exit) | Accepted |

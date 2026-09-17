@@ -74,19 +74,24 @@ def _bspline_from_fit(fit) -> BSpline:
     return BSpline(knots, np.column_stack(c_list), k)
 
 
-def fit_validity(track, fit) -> tuple[bool, str | None]:
+def fit_validity(
+    track, fit, deviation_factor: float = S2_VALIDITY_DEVIATION_FACTOR, control_bound_factor: float = S2_VALIDITY_CONTROL_BOUND_FACTOR
+) -> tuple[bool, str | None]:
     """ADR-0010: a fit is invalid (excluded from S2's pass/fallback counts
     entirely) if EITHER fixed condition fails:
       1. dense-grid deviation from the track (traj.spline.dense_max_error's
          existing point-to-segment-on-a-dense-grid methodology, mode="time")
-         exceeds S2_VALIDITY_DEVIATION_FACTOR * the fitter's own tol;
-      2. any control point is more than S2_VALIDITY_CONTROL_BOUND_FACTOR bbox
-         diagonals of the track away from the track's own first point.
-    Thresholds are fixed before the run; see ADR-0010 for why and for the
-    process to follow if they turn out to need revisiting.
+         exceeds deviation_factor * the fitter's own tol;
+      2. any control point is more than control_bound_factor bbox diagonals
+         of the track away from the track's own first point.
+    Defaults are ADR-0010's fixed-before-the-run thresholds; not adjusted
+    after seeing results. The two parameters exist only so ADR-0012's
+    side-by-side alternative-threshold comparison can reuse this same
+    function without duplicating it -- the DEFAULT behavior (and everything
+    in the M1 report's primary table) always uses ADR-0010's own values.
     """
     dev = dense_max_error(track.t, track.xy, fit.tck, mode="time")
-    if dev > S2_VALIDITY_DEVIATION_FACTOR * S2_FIT_TOL:
+    if dev > deviation_factor * S2_FIT_TOL:
         return False, "dense_deviation"
 
     _, c_list, _ = fit.tck
@@ -94,7 +99,7 @@ def fit_validity(track, fit) -> tuple[bool, str | None]:
     bbox_diag = _bbox_diagonal(track.xy)
     ref = track.xy[0]
     max_ctrl_dist = float(np.max(np.hypot(*(c - ref).T)))
-    if max_ctrl_dist > S2_VALIDITY_CONTROL_BOUND_FACTOR * bbox_diag:
+    if max_ctrl_dist > control_bound_factor * bbox_diag:
         return False, "control_point_bound"
 
     return True, None
@@ -294,7 +299,13 @@ def _certify_reference(bs: BSpline) -> tuple[float | None, bool]:
     return None, False
 
 
-def run_s2(tracks, label: str, fitter=fit_adaptive) -> dict:
+def run_s2(
+    tracks,
+    label: str,
+    fitter=fit_adaptive,
+    deviation_factor: float = S2_VALIDITY_DEVIATION_FACTOR,
+    control_bound_factor: float = S2_VALIDITY_CONTROL_BOUND_FACTOR,
+) -> dict:
     n_pass = 0
     n_fallback = 0  # eps_A == inf at the certificate's own lam (or the fit itself raised)
     n_fit_error = 0  # fitter raised -- distinct from a certification-level fallback
@@ -322,7 +333,7 @@ def run_s2(tracks, label: str, fitter=fit_adaptive) -> dict:
         bbox_diag = _bbox_diagonal(tr.xy)
         control_ratios.append(float(np.max(np.hypot(*(c - tr.xy[0]).T))) / max(bbox_diag, 1e-9))
 
-        valid, reason = fit_validity(tr, fit)
+        valid, reason = fit_validity(tr, fit, deviation_factor=deviation_factor, control_bound_factor=control_bound_factor)
         if not valid:
             n_invalid_fit += 1
             invalid_reasons.append(reason)

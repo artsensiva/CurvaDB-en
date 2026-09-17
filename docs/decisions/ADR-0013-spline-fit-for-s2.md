@@ -64,6 +64,14 @@ above the 5-point tie-break threshold -- no need to consult `eps_A`/`tol` or abs
 comparison variant (per the original Decision), and the spec deviation this implies is recorded
 in `docs/ROADMAP.md` section 8 (already committed, `cdd1462`).
 
+**Addendum (M2, `docs/reviews/step7_M1_3.md` carry-over item 1):** the validity criterion
+`spline.fit()` was measured against is that fitter's own dense-error contract (`spline.py`'s
+`fit()` is defined to satisfy dense-grid error `<= tol` by construction, ADR-0010's condition 1),
+so its 100% valid-fraction result is expected *by construction*, not evidence of a neutral,
+fitter-agnostic contest. The choice stands regardless: that same dense-error quantity is exactly
+what S2's certificate needs (an honest representation of the track), so measuring fitters against
+it is the right criterion even though it structurally favors the fitter designed around it.
+
 For reference, the (unused, since the rule didn't reach step 3) tie-break indicators would have
 favored `spline.fit()` too: median `eps_A/tol` 0.811 vs. 0.754 (`fit_adaptive` slightly lower),
 but absolute median `eps_A` 8.114 m vs. 7.540 m (`fit_adaptive` slightly lower) -- the two

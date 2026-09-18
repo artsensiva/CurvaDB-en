@@ -451,3 +451,146 @@ a fix to `spline_lsq.py`. If a future milestone specifically needs `spline_lsq`'
 `docs/phases/step7_summary.md` (per `CLAUDE.md`'s Documentation rules, one page per gate) is not
 yet written -- it will be created at gate G1, after M3, once the full step7 phase's scope is
 complete, not at this intermediate milestone.
+
+## M2 -- spline certificate via monotone projection matching (spec section 2.3)
+
+Corpus: the same 585 cleaned track segments as M1, `spline.fit()` (`tol=10.0`, ADR-0013's
+selected S2 fitter). `certify_spline_projection` (spec 2.3) is tried first; `certify_spline`
+falls back to the existing `certify_spline_linearization` (2.4, M1, unchanged) per track when 2.3
+can't fully certify. Implementation: `src/traj/certify.py` (ADR-0015: correspondence-point
+search; ADR-0016: certificate structure); `src/traj/bezier.py`'s `bezier_segments_in_range`; new
+property tests in `tests/traj/test_certify.py`; full-corpus run in
+`benchmarks/step7_m2_projection.py`.
+
+**S1's methodology is three genuine checks, not the near-exact-linearization reference M1 used
+for S2** (a mid-implementation correction): that reference is itself only an upper bound
+(`d_F(A,Lin)+lam`), so a genuinely tighter 2.3 certificate can legitimately be *smaller* than it
+-- comparing against it as a correctness floor would be invalid.
+
+| Criterion | Threshold | Actual | Passed |
+|---|---|---|---|
+| S1a: `eps_A(combined) >= LB` (`hausdorff_lower_bound`, genuine lower bound) | 100% of tracks | 585/585 (0 violations) | yes |
+| S1b: `eps_A(combined) >= distance_mp(A, Lin(A',1.0)) - 1.0 - 1e-3` (reverse triangle inequality, genuine lower bound) | 100% of a 30-track sample | 30/30 | yes |
+| S1c: direct dense-sampling verification of the spec's own clamp-cost formula + monotonicity (spec section 9), on every 2.3-certified track (not a sample) | 100% of 96 2.3-certified tracks | 96/96 (0 violations) | yes |
+| S2: combined-pipeline `eps_A` vs. near-exact-linearization reference (`lam=1e-4`) `- 1e-4` | 100% of tracks with an available reference | 585/585 (0 failures, reference available for all 585) | yes |
+| S3 (density): median `eps_A/LB` for splines `<= 2` | median `<= 2` | median 1.019 (p90 1.738, p99 2.554, max 7.497) | yes |
+| S3 (fallback rate): fraction of splines (tracks) that fell back to 2.4 | `<= 10%` | **489/585 = 83.6%** | **no** |
+
+**S1b's slack (30-track mpmath sample) is `1.0` m, not the originally-envisioned `1e-6`** --
+found infeasible empirically before running against real data (fixed before the run, not tuned
+after seeing results): `tests/traj/_frechet_cont_mpmath.py`'s own docstring already says "too
+slow for anything but small fixtures (n, m <= ~6)"; confirmed directly (`n=264, m=100`, 26,400
+DP cells, did not complete in 120s -- `distance_mp`'s bisection needs ~25-30 `decide_mp` calls to
+reach a tight tolerance, each `O(n*m)` in arbitrary-precision arithmetic). Fixed parameters
+(`benchmarks/step7_m2_projection.py`): `lam_ref=1.0`, mpmath `tol=1e-3`, `dps=25`, and the
+30-track sample is drawn only from tracks where `n * m(lam_ref=1.0) <= 3000` (a *tractability*
+filter, checked before knowing what `distance_mp` would return, not a favorable-results filter).
+A slack of `1.0` m is still meaningfully tight relative to typical `eps_A` values (~5-15 m) --
+30/30 tracks pass regardless.
+
+**S1a's LB computation needed its own fix mid-run** (ADR-0017): a first attempt used a
+fixed-count uniform spline sample (~500-700 points) for `LB`, which produced 12 *false* S1a
+violations (certificates that looked smaller than `LB` by up to 3.3 m). Investigated directly:
+the uniform sample was simply too coarse to resolve a locally curvy stretch on those specific
+splines (confirmed: `hausdorff_lower_bound(Lin(A'), uniform_708_points) = 3.59`, when it should
+be `<= lam=0.1` if the sample faithfully represented the curve; a 2000-point sample already
+dropped this to `0.59`). Fixed by reusing the near-exact-linearization reference's own
+adaptively-placed vertices (already computed for S2) as the dense sample instead -- all 12
+violations resolved (`LB` dropped below `eps_A` in every case once measured correctly), and a
+vectorized point-to-polyline distance computation (`_fast_hausdorff_lower_bound`) was needed to
+make this tractable at the resulting scale (`m` up to ~10,000). This is a benchmark-methodology
+fix; `certify_spline_projection`/`certify_spline_linearization` themselves were never wrong.
+
+### 2.3 vs. 2.4 comparison (96 tracks where 2.3 succeeds)
+
+| Quantity | median | p90 | p99 | max | min |
+|---|---|---|---|---|---|
+| `eps_A(2.3) / eps_A(2.4)` | **1.683** | 1.963 | 3.744 | 6.863 | 0.991 |
+| `eps_A(2.3) / near-exact reference` (informational density metric) | 1.703 | 1.995 | -- | 6.964 | 1.000 |
+| time, section 2.3 (s) | 0.103 | 0.507 | -- | 13.666 | -- |
+| time, section 2.4 (s) | 0.070 | 0.349 | -- | 12.590 | -- |
+
+Per-track certification time, full combined pipeline (fit + 2.3 + 2.4-for-comparison + near-exact
+reference): median 2.84 s, p90 12.70 s, max 213.9 s (the near-exact reference at `lam=1e-4`
+dominates this -- see M3 carry-over note below).
+
+**Correction to the plan's own expectation**: `eps_A(2.3)/reference`'s minimum is exactly
+`1.000`, never below -- both `eps_A(2.3)` and the near-exact reference upper-bound the *same*
+true `d_F(A, spline)`, and the reference is specifically built to be near-exact (a very fine,
+certified linearization), so `eps_A(2.3) >= reference` is the expected mathematical relationship,
+not `< 1`. The milestone's plan described `< 1` as the expected/good outcome for this ratio; the
+data corrects that -- the ratio instead measures how much slack 2.3's specific correspondence
+construction carries above the best achievable bound (typically 70%, sometimes up to 6x).
+
+### 30-track mpmath sample (S1b), `eps_A` vs. both lower bounds
+
+| idx | n | m (`lam_ref=1`) | `eps_A` | `LB` (near-exact ref) | `eps_A/LB` | `distance_mp` | mpmath LB | `eps_A`/mpmath LB |
+|---|---|---|---|---|---|---|---|---|
+| 265 | 56 | 35 | 6.309 | 1.253 | **5.035** | 6.209 | 5.208 | 1.211 |
+| 134 | 67 | 6 | 18.427 | 9.518 | 1.936 | 9.518 | 8.517 | 2.163 |
+| 375 | 83 | 9 | 17.961 | 9.238 | 1.944 | 9.238 | 8.237 | 2.180 |
+| 373 | 116 | 13 | 10.083 | 5.057 | 1.994 | 5.057 | 4.056 | 2.486 |
+| (26 more, all `eps_A >= mpmath_lower_bound`) | | | | | | | | |
+
+All 30/30 satisfy `eps_A >= distance_mp - 1.0 - 1e-3` (S1b). Track 265's `eps_A/LB = 5.0` is the
+same *self-proximity* mechanism M1.3's tail analysis already identified for polylines (the
+whole-track vertex-Hausdorff bound benefits from matching to a spatially-close but
+non-corresponding part of the track, a shortcut the order-preserving certificate cannot take) --
+not a new phenomenon, and not evidence against `eps_A`'s correctness (`eps_A/mpmath_lower_bound`
+for the same track is a much more modest 1.211, since the mpmath lower bound uses a full,
+non-simplified linearization rather than sparse vertices).
+
+### Fallback structure
+
+Fallback is a **per-track** decision (spec 2.3 item 5: if *any* piece can't certify, the whole
+track uses 2.4) but the *piece*-level failure rate is low: 2,639/141,363 pieces (**1.87%**). With
+an average of ~242 pieces per track, even a small per-piece failure probability compounds
+multiplicatively across a track's pieces -- `(1 - 0.0187)^242 ≈ 0.011`, i.e. only ~1% of tracks
+would be expected to have *zero* failing pieces if failures were independent and identically
+likely per piece, roughly consistent with the observed 16.4% success rate once piece failures'
+real clustering (some tracks are uniformly easy, others have a genuinely hard, curvy stretch) is
+accounted for. This is a structural consequence of the per-track fallback granularity combined
+with a nonzero (if individually small) piece failure rate -- not evidence of an implementation
+defect, and not fixable by raising `max_levels` alone (ADR-0016: a piece with no interior root at
+all is provably, permanently non-monotone relative to its fixed direction, regardless of budget).
+
+### M2 Conclusions
+
+**Results vs. criteria**: S1 (all three genuine checks) and S2 pass at 100%. S3's density
+threshold (median `eps_A/LB <= 2`) passes (1.019). **S3's fallback-rate threshold (`<=10%`)
+fails**: 83.6% of tracks fall back to section 2.4, nearly 8x the threshold.
+
+**Key negative finding of this milestone**: `eps_A(2.3)`'s median is **1.68x larger** than
+`eps_A(2.4)` on the very tracks where 2.3 succeeds -- section 2.3, the spec's primary, more
+elaborate spline certificate, is *not* typically tighter than section 2.4's simpler
+certified-linearization fallback in practice, and section 2.3 fails to certify at all on the
+large majority (83.6%) of real tracks. Per `CLAUDE.md` ("a negative benchmark result is a normal
+result -- don't force it"), this is reported as a genuine finding, not adjusted away: the spec's
+own architecture (2.4 as "always applicable, but coarser," section 2.4's own text) turns out, on
+real GeoLife data, to be both more *available* and typically *tighter* than the primary path it
+was meant to back up.
+
+**What we now know**: the certificate is *correct* wherever it applies -- confirmed three
+independent ways (genuine lower bounds via `LB` and mpmath, and direct dense-sampling
+verification of the spec's own formula on every successful track). The certificate is
+*available* on only 16.4% of real tracks, and even there is usually looser than the simpler
+fallback. The mechanism (ADR-0016) is structural: 2.3 certifies against the ORIGINAL track's
+fixed per-vertex segments, so a single genuinely non-monotone piece (real GPS noise or curvature
+relative to a specific short segment) forces the whole track to fall back; with ~242 pieces per
+track on average, this is common even at a low (1.87%) per-piece rate.
+
+**Decisions**: ADR-0015 (correspondence-point search: coarse scan + safeguarded Newton, fixing
+two real pathologies found while smoke-testing), ADR-0016 (certificate structure: fixed
+direction, measured tube, early exit on unsplittable pieces), ADR-0017 (LB needs an adaptively
+dense sample, not a fixed uniform count). Seventeen ADRs total now cover the M0-M2 decision
+history (`docs/decisions/README.md`).
+
+**Open issues / M3 carry-overs**: the near-exact-linearization reference (`lam=1e-4`) dominates
+the combined-pipeline per-track time reported above (median 2.84s, max 213.9s) -- M3's query load
+will be much heavier and does not need this reference at all (it exists only for this milestone's
+own S2/density accounting), so M3's own timing budget should be planned around 2.3's and 2.4's
+own costs directly (medians under 0.1s each), not this milestone's reporting overhead. Given S3's
+fallback-rate failure, M2 does not by itself justify preferring section 2.3 over relying on 2.4
+as the default in a real system -- a design question for M3/M4 to weigh against 2.3's per-track
+tightness where it *does* succeed. `docs/phases/step7_summary.md` remains deferred to gate G1
+after M3 (unchanged from M1/M1.2/M1.3's own notes).

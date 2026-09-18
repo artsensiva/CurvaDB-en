@@ -57,3 +57,4 @@ Commits, reports (`benchmarks/results/step7.md`), reviews (`docs/reviews/`), oth
 | [0014](ADR-0014-dense-error-domain-bug.md) | `dense_max_error`'s parametrization-domain bug (ADR-0010/ADR-0012's numbers invalid) | Accepted |
 | [0015](ADR-0015-correspondence-point-search.md) | Correspondence-point search for section 2.3 (coarse scan + safeguarded Newton) | Accepted |
 | [0016](ADR-0016-projection-certificate-structure.md) | Section 2.3 certificate structure (fixed direction, measured tube, early exit) | Accepted |
+| [0017](ADR-0017-lb-needs-adaptive-dense-sample.md) | `hausdorff_lower_bound`'s dense spline sample must be adaptive, not fixed-count-uniform | Accepted |

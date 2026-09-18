@@ -594,3 +594,132 @@ fallback-rate failure, M2 does not by itself justify preferring section 2.3 over
 as the default in a real system -- a design question for M3/M4 to weigh against 2.3's per-track
 tightness where it *does* succeed. `docs/phases/step7_summary.md` remains deferred to gate G1
 after M3 (unchanged from M1/M1.2/M1.3's own notes).
+
+## M3 -- interval range queries (spec section 2.5)
+
+Corpus: the same 585 cleaned tracks plus 415 "near-duplicate" tracks (a controlled translation
+perturbation with a measured, not assumed, `d_F` to their source -- see below), 1000 total, both
+representations (DP+SED polyline, spline.fit()+section 2.4 only per ADR-0018, `lam=0.1` fixed --
+M1/M2's `lam=1e-4` near-exact reference is never used at query time). 1000 queries (drawn from
+this corpus) x 3 ranges (`r in {50, 200, 1000}` m) x 2 representations, against every other
+corpus entry (999 candidates each). `src/traj/intervals.py` (ADR-0019) implements the
+accept/reject/refine rule via `decide()` only. Implementation: `benchmarks/step7_query.py`.
+
+### Near-duplicate generation and hard-regime coverage (mandatory correction 3)
+
+A near-duplicate is a uniform translation of a source track by a vector of a chosen target
+magnitude, plus small jitter -- the identity (same-index) correspondence gives every point the
+same cost, so `d_F <= target_distance` by construction, and for a generic (non-self-similar)
+track shape the true `d_F` lands close to the target; **every resulting `d_F` is independently
+measured** via `traj.frechet_cont.distance` on the raw polylines, never assumed from the target.
+(An earlier version used a *local* bump on a sub-range of points instead -- found empirically to
+be a much less reliable way to hit a target distance, since a local perturbation's contribution
+to the Fréchet distance depends on how it interacts with the optimal matching, not just its own
+size; switched to the global-translation approach before the real run, not after seeing bad
+results from it.)
+
+Generation ran in rounds, checking after each whether every `r` has `>=10%` of (duplicate,
+source) pairs with true `d_F` inside `r +/- 2*sum_eps` (the hardest regime for the interval
+rule), for **both** representations independently -- retargeting under-covered `r`'s with a
+tighter jitter in later rounds:
+
+| Round | Duplicates | Coverage (polyline / spline), `r=50` | `r=200` | `r=1000` |
+|---|---|---|---|---|
+| 0 (broad) | 60 | 8.3% / 15.0% | 3.3% / 3.3% | 1.7% / 1.7% |
+| 1 (targeted) | 80 | 12.5% / 17.5% | 13.75% / 13.75% | 8.75% / 8.75% |
+| 2 (targeted) | 100 | **17.0% / 21.0%** | **19.0% / 19.0%** | **12.0% / 12.0%** |
+
+All six `(r, representation)` combinations clear the `>=10%` bar by round 2 -- no further
+targeted rounds needed. An additional 315 general-volume near-duplicates (broad amplitude, not
+aimed at any specific `r`) were then added purely to reach 1000 distinct corpus entries (needed
+for a full 1000-query set, since 585 base + 100 coverage-targeted duplicates = 685 < 1000) --
+these do not count toward or dilute the coverage numbers above, which are measured only against
+the 100 coverage-targeted duplicates.
+
+### Criteria (spec section 8)
+
+| Criterion | Threshold | Actual | Passed |
+|---|---|---|---|
+| S4: 0 misses, 0 false positives (certified method vs. full brute force) | 1000 queries x 3 r's x 2 representations | 0/0 in all 6 million (query, candidate, r, representation) combinations | yes |
+| S5: fraction of candidates resolved without reading originals, **among post-cheap-filter survivors** (mandatory correction 1) | `>= 80%` for at least one representation, per `r` | `r=50`: 61.7% (polyline) / 57.9% (spline); `r=200`: 84.8% / 83.7%; `r=1000`: 95.6% / 95.0% | **`r=50`: no; `r=200`, `r=1000`: yes** |
+| S5, informational: fraction resolved without reading originals, **among ALL candidates** | -- (reference only) | 99.92-99.97% for every `r`/representation (the cheap pre-filter alone resolves the large majority, see below) | -- |
+| S6a: certificate size | `<= 16 bytes/track` | 8 bytes/track (one float64, either representation -- ADR-0018's `eps_A` already bundles `lam`) | yes |
+| S6b: query time vs. approximate search without certificates | `<= 2x` | polyline 2.66x; spline 4.38x (median latency ratio) | **no** |
+| Stop condition: S5 `< 50%` for **all** representations | direction closes if triggered | worst case (r=50) is 57.9%/61.7%, still `> 50%` | **not triggered** |
+
+### Rejections: cheap filter vs. interval rule (mandatory correction 2)
+
+Both sides of `decide_range`'s interval rule are checked explicitly (ADR-0019); rejections are
+split into `reject_cheap` (endpoint/bbox lower bound alone, no `decide()` call) and
+`reject_interval` (the interval rule's own upper-threshold check). Across all three `r`'s and
+both representations, **99.94-99.99% of all rejections come from the free cheap filter alone** --
+the interval rule itself (an actual `decide()` call) only ever has to reject the small residue the
+cheap filter couldn't already dismiss (e.g. `r=1000`, polyline: 982,160 cheap rejections vs. 612
+interval-rule rejections). This is expected given the corpus spans geographically and temporally
+disjoint GeoLife users/days -- most candidate pairs are simply nowhere near each other.
+
+### Latency and interval width (informational)
+
+Dedicated timing sample (4000 pairs, not reused from the correctness grid -- each method run
+through its own real code path):
+
+| Method | Median | p95 |
+|---|---|---|
+| brute (raw, no filter) | 11.5 us | 22.1 us |
+| filter_uncompressed (cheap filter + raw decide) | 43.0 us | 123.7 us |
+| approximate, polyline (no certificate) | 8.2 us | 11.5 us |
+| **certified, polyline** | **21.9 us** | **33.1 us** |
+| approximate, spline (no certificate) | 12.6 us | 32.5 us |
+| **certified, spline** | **55.0 us** | **188.6 us** |
+
+The certified method's overhead over the approximate one (S6b, above) comes from `decide_range`
+needing up to two `decide()` calls (accept-check, then reject-check) plus the cheap-bound
+computation, vs. the approximate method's single, unconditional call -- a structural consequence
+of checking both sides of the interval explicitly, not a specific inefficiency to fix.
+
+Interval width (`2*sum_eps`, the full width of `[D-sum_eps, D+sum_eps]`, over 200,000 sampled
+pairs per representation): polyline median 30.8 m (p90 36.0 m, p99 38.2 m, max 39.7 m); spline
+median 31.9 m (p90 40.3 m, p99 51.9 m, max 86.8 m) -- consistent with M1/M2's own established
+`eps_A` scales for these representations (tighter for polylines, a somewhat heavier tail for
+splines' section 2.4 certificates).
+
+Refine rate (fraction of candidates needing to read the originals, i.e. `1 - S5(post-filter)`):
+`r=50` 38.3%/42.1%, `r=200` 15.2%/16.3%, `r=1000` 4.4%/5.0% (polyline/spline) -- mirrors S5's own
+`r`-dependence directly (smaller `r` means `sum_eps` is a larger fraction of `r`, widening the
+*relative* size of the ambiguous interval band).
+
+### M3 Conclusions
+
+**Results vs. criteria**: S4 passes perfectly (0 misses, 0 false positives, the whole point of
+the certified store). S6a (certificate size) passes trivially. **S5 fails at `r=50`** for both
+representations (58-62% vs. the `>=80%` threshold) while passing comfortably at `r=200` and
+`r=1000`. **S6b (query time `<=2x` approximate) fails** for both representations (2.7x-4.4x). The
+stop condition (S5 `<50%` for *all* representations) is **not triggered** -- even the worst case
+clears 50%, so per spec section 8 the direction does not close on this basis.
+
+**Key negative findings, reported plainly** (`CLAUDE.md`: "a negative benchmark result is a
+normal result"): (1) at short range (`r=50`, comparable in scale to the certificates'
+own ~15 m/side interval half-width), the interval rule resolves a *minority* of post-filter
+candidates without reading originals -- the certified store's main promised benefit (avoiding
+the originals) degrades exactly where queries are tightest, a direct, structural consequence of
+`sum_eps` not shrinking with `r`. (2) The certified method is consistently slower than the
+uncertified approximate one by more than the spec's `2x` budget, because checking both sides of
+the interval costs up to two `decide()` calls where the approximate method needs only one --
+inherent to explicitly guaranteeing correctness (S4's 0/0 result), not a fixable inefficiency in
+this implementation.
+
+**What we now know**: the certified interval query pipeline is *exactly correct* (S4, confirmed
+at full 6-million-pair scale) and its overhead is *concentrated and explicable* (cheap filters
+alone resolve >99.9% of all rejections; the remaining cost is the interval rule's own two-sided
+check). Its *practical* usefulness is range-dependent: it clearly earns its keep at `r=200` and
+`r=1000` (S5 passes, most candidates resolved cheaply) but is less compelling at `r=50`, where
+reading the originals is needed for close to half the post-filter candidates anyway.
+
+**Decisions**: ADR-0019 (interval rule design, decide-only, the `eps_A = epsilon+lambda` mapping).
+Nineteen ADRs total now cover the M0-M3 decision history (`docs/decisions/README.md`).
+
+**Open issues**: whether the certified store is worth its S6b overhead at small `r` specifically
+is a product/architecture question for M4's summary, not resolved here -- M3's job was to measure
+it honestly, which it does. `docs/phases/step7_summary.md` is created at gate G1, which M3
+completes the acceptance-criteria portion of; M4's summary report is the next and final step7
+milestone.

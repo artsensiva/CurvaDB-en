@@ -577,21 +577,43 @@ def certify_spline_projection(A: np.ndarray, bs: BSpline, eta: float = 1e-3, max
 
 
 def certify_spline(
-    A: np.ndarray, bs: BSpline, eta: float = 1e-3, lam_fallback: float = 0.1, max_levels: int = 12
+    A: np.ndarray,
+    bs: BSpline,
+    eta: float = 1e-3,
+    lam_fallback: float = 0.1,
+    max_levels: int = 12,
+    use_projection: bool = False,
 ) -> tuple[float, str]:
-    """Spec section 2.3 (primary), falling back to section 2.4 for the WHOLE track
-    when 2.3 can't fully certify (spec's own documented risk, section 10 -- splines
-    that loop relative to some original segment). Returns (eps_A, method), method
-    in ("2.3", "2.4_fallback", "2.4_fallback_uncertified") -- the last meaning even
-    the fallback couldn't certify (eps_A is inf, per certify_spline_linearization's
-    own contract)."""
-    result = certify_spline_projection(A, bs, eta=eta, max_levels=max_levels)
-    if result.fully_certified:
-        return result.eps_A, "2.3"
+    """ADR-0018: section 2.4 (certified linearization) is the DEFAULT and only
+    path used unless use_projection=True. Full-corpus validation (M2,
+    benchmarks/results/step7.md) found section 2.3 (monotone projection
+    matching, certify_spline_projection) certifies only 16.4% of real tracks
+    and, where it does, has a MEDIAN eps_A 1.68x LARGER than section 2.4's own
+    -- neither more available nor tighter than the certificate it was meant to
+    back up (a spec design issue, docs/reviews/step7_M2.md, not an
+    implementation defect -- both paths are independently verified correct
+    wherever each applies). Section 2.3 is kept in the code as a verified
+    alternative for research/comparison use, not as the default.
+
+    Returns (eps_A, method):
+      use_projection=False (default): method in ("2.4", "2.4_uncertified").
+      use_projection=True: unchanged pre-ADR-0018 behavior -- section 2.3 is
+        tried first, falling back to section 2.4 for the WHOLE track if 2.3
+        can't fully certify (spec section 2.3 item 5 / section 10's
+        documented risk -- splines that loop relative to some original
+        segment); method in ("2.3", "2.4_fallback", "2.4_fallback_uncertified"),
+        the last meaning even the fallback couldn't certify (eps_A is inf,
+        per certify_spline_linearization's own contract).
+    """
+    if use_projection:
+        result = certify_spline_projection(A, bs, eta=eta, max_levels=max_levels)
+        if result.fully_certified:
+            return result.eps_A, "2.3"
+
     eps_A, ok = certify_spline_linearization(A, bs, lam_fallback, eta=eta, max_levels=max_levels)
     if not ok:
-        return float("inf"), "2.4_fallback_uncertified"
-    return eps_A, "2.4_fallback"
+        return float("inf"), "2.4_fallback_uncertified" if use_projection else "2.4_uncertified"
+    return eps_A, "2.4_fallback" if use_projection else "2.4"
 
 
 def hausdorff_lower_bound(A: np.ndarray, A_prime: np.ndarray) -> float:

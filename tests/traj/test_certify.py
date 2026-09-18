@@ -272,16 +272,38 @@ def test_certify_spline_projection_matches_dense_sampling(n_interior, n_points, 
 
 @given(n_interior=st.integers(min_value=0, max_value=5), n_points=st.integers(min_value=4, max_value=15), seed=st.integers(min_value=0, max_value=2**31 - 1))
 @_settings
-def test_certify_spline_never_returns_finite_eps_a_when_uncertified(n_interior, n_points, seed):
-    """certify_spline's contract: either a method succeeded (2.3 or 2.4 fallback)
-    with a finite eps_A, or even the fallback failed (2.4_fallback_uncertified)
-    and eps_A is inf -- never a finite number without a method that backs it."""
+def test_certify_spline_default_uses_2_4_only(n_interior, n_points, seed):
+    """ADR-0018: certify_spline's DEFAULT (use_projection=False) uses section
+    2.4 only -- method in ("2.4", "2.4_uncertified"), never "2.3"/"2.4_fallback"
+    (those are use_projection=True's vocabulary). Either a finite eps_A, or an
+    honest inf when even 2.4 can't certify -- never a finite number without a
+    method that backs it."""
     rng = np.random.default_rng(seed)
     bs = _random_spline(rng, n_interior=n_interior)
     t_pts = np.linspace(0.0, 10.0, n_points)
     A = np.asarray(bs(t_pts)) + rng.normal(0.0, 0.5, (n_points, 2))
 
     eps_A, method = certify_spline(A, bs, max_levels=12)
+    assert method in ("2.4", "2.4_uncertified")
+    if method == "2.4_uncertified":
+        assert eps_A == float("inf")
+    else:
+        assert 0.0 <= eps_A < float("inf")
+
+
+@given(n_interior=st.integers(min_value=0, max_value=5), n_points=st.integers(min_value=4, max_value=15), seed=st.integers(min_value=0, max_value=2**31 - 1))
+@_settings
+def test_certify_spline_use_projection_true_tries_2_3_first(n_interior, n_points, seed):
+    """certify_spline's use_projection=True mode (kept for research/comparison
+    use, ADR-0018) is unchanged from its pre-ADR-0018 behavior: section 2.3
+    tried first, falling back to section 2.4 for the whole track if 2.3 can't
+    fully certify -- never a finite number without a method that backs it."""
+    rng = np.random.default_rng(seed)
+    bs = _random_spline(rng, n_interior=n_interior)
+    t_pts = np.linspace(0.0, 10.0, n_points)
+    A = np.asarray(bs(t_pts)) + rng.normal(0.0, 0.5, (n_points, 2))
+
+    eps_A, method = certify_spline(A, bs, max_levels=12, use_projection=True)
     assert method in ("2.3", "2.4_fallback", "2.4_fallback_uncertified")
     if method == "2.4_fallback_uncertified":
         assert eps_A == float("inf")

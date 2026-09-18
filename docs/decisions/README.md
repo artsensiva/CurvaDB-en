@@ -59,3 +59,4 @@ Commits, reports (`benchmarks/results/step7.md`), reviews (`docs/reviews/`), oth
 | [0016](ADR-0016-projection-certificate-structure.md) | Section 2.3 certificate structure (fixed direction, measured tube, early exit) | Accepted |
 | [0017](ADR-0017-lb-needs-adaptive-dense-sample.md) | `hausdorff_lower_bound`'s dense spline sample must be adaptive, not fixed-count-uniform | Accepted |
 | [0018](ADR-0018-2-4-primary-spline-certificate.md) | Section 2.4 becomes the primary spline certificate; section 2.3 excluded from the pipeline | Accepted |
+| [0019](ADR-0019-interval-queries-design.md) | Interval queries (section 2.5): `eps_A` already equals `epsilon+lambda`, decide-only rule | Accepted |

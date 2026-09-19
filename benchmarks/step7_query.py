@@ -333,6 +333,7 @@ def _eps_of(entry: dict, rep: str) -> float | None:
 def _new_rep_stats() -> dict:
     return {
         "n_total_candidates": 0,
+        "n_ground_truth_positive": 0,
         "n_accept": 0,
         "n_reject_cheap": 0,
         "n_reject_interval": 0,
@@ -341,6 +342,7 @@ def _new_rep_stats() -> dict:
         "n_false_positive": 0,
         "approx_n_miss": 0,
         "approx_n_false_positive": 0,
+        "approx_n_predicted_positive": 0,
     }
 
 
@@ -382,6 +384,8 @@ def run_correctness_grid(full_corpus: list[dict], query_indices: list[int]) -> d
                     stats = results[r][rep]
                     stats["n_total_candidates"] += 1
                     ground_truth = ground_truth_by_r[r]
+                    if ground_truth:
+                        stats["n_ground_truth_positive"] += 1
 
                     outcome = decide_range(q_lin, a_lin, r, sum_eps, cheap_lb=cheap_lb)
                     if outcome == "accept":
@@ -403,8 +407,10 @@ def run_correctness_grid(full_corpus: list[dict], query_indices: list[int]) -> d
                         stats["n_miss"] += 1
 
                     approx_accept = bool(decide(q_lin, a_lin, r))
-                    if approx_accept and not ground_truth:
-                        stats["approx_n_false_positive"] += 1
+                    if approx_accept:
+                        stats["approx_n_predicted_positive"] += 1
+                        if not ground_truth:
+                            stats["approx_n_false_positive"] += 1
                     if (not approx_accept) and ground_truth:
                         stats["approx_n_miss"] += 1
 

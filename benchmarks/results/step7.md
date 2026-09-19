@@ -723,3 +723,123 @@ is a product/architecture question for M4's summary, not resolved here -- M3's j
 it honestly, which it does. `docs/phases/step7_summary.md` is created at gate G1, which M3
 completes the acceptance-criteria portion of; M4's summary report is the next and final step7
 milestone.
+
+## M4 -- final metrics and conclusions
+
+`benchmarks/step7_m4.py`. Item 1 recomputes M3's correctness grid (same deterministic corpus/
+query set) with two added counters (`n_ground_truth_positive`, `approx_n_predicted_positive`) --
+verified to reproduce M3's own S4/S5 numbers identically before trusting the new ones.
+
+### 1. The missing mandatory number (spec section 8): approximate search's error rates
+
+Both fractions requested: **miss rate** = misses / total true answers; **false-positive rate** =
+false positives / the approximate method's *own* predicted-positive count (not total candidates
+-- a method that predicts almost nothing positive would otherwise look artificially error-free).
+
+| `r` | Representation | True answers | Miss rate | False-positive rate |
+|---|---|---|---|---|
+| 50 | polyline | 396 | 1.52% | 0.51% |
+| 50 | spline | 396 | 3.03% | 2.04% |
+| 200 | polyline | 1,758 | 0.46% | 0.00% |
+| 200 | spline | 1,758 | 1.14% | 0.57% |
+| 1000 | polyline | 15,854 | 0.03% | 0.03% |
+| 1000 | spline | 15,854 | 0.19% | 0.20% |
+
+This is the direct, quantified answer to spec section 1's third research question ("what does
+dropping the guarantee cost"): small but *real and nonzero* at every `r` and both
+representations, worst at short range (`r=50`) where the approximation's own slack matters most
+relative to the query radius, and consistently roughly 2x worse for splines than polylines at
+the same `r`. The certified method (S4, M3) has none of these errors, at the cost of S5/S6b's own
+shortfalls (M3).
+
+### 2. Trade-off curve: DP+SED `tol` vs. certificate, size, and refine rate (polylines)
+
+100-track subsample (70 base + 30 near-duplicates targeting `r in {50, 200}`, for a measurable
+refine rate at `r=50` -- a plain random sample has essentially no pairs that close, per M3's own
+>99.9% cheap-filter-rejection finding), 200 queries:
+
+| `tol` (m) | median `eps_A` (m) | bytes/track (quantized + zlib) | S5 at `r=50` | S5 at `r=200` |
+|---|---|---|---|---|
+| 1 | 0.18 | 717.5 | **92.9%** | 100.0% |
+| 2 | 0.73 | 713.0 | 78.6% | 94.1% |
+| 5 | 2.12 | 694.5 | 50.0% | 94.1% |
+| 10 | 4.51 | 656.5 | 33.3% | 91.4% |
+| 20 | 7.31 | 616.0 | 21.1% | 82.5% |
+
+**`tol <= 1` m is needed to clear S5's 80% bar at `r=50`** in this sample (`tol=2` already falls
+short at 78.6%); the cost is modest -- 717.5 vs. 616.0 bytes/track (quantized+zlib estimate,
+`benchmarks/step7_m4.py`'s `quantized_bytes`: 1 cm grid, int32, zlib level 9 -- a simple,
+documented estimate, not a production codec) is a **+16.5% size increase** for the tight `tol=1`
+representation compared to the loose `tol=20` one, in exchange for going from 21% to 93% of
+short-range candidates resolved without reading originals. `r=200` clears 80% at every `tol`
+tested, consistent with M3's own full-corpus finding (S5 at `r=200` passes regardless of the
+tighter M1/M2 `tol=10` used elsewhere in this document).
+
+### 3. Per-query latency at `r=200` (median/p95 across queries, not per-pair)
+
+| Method | Median | p95 |
+|---|---|---|
+| filter_uncompressed | 41.7 ms | 91.7 ms |
+| **certified, polyline** | **20.1 ms** | 26.9 ms |
+| approximate, polyline | 5.5 ms | 6.5 ms |
+| **certified, spline** | **57.1 ms** | 158.2 ms |
+| approximate, spline | 11.1 ms | 40.7 ms |
+
+Consistent with M3's per-pair numbers scaled by the ~999-candidate corpus (e.g. certified-polyline
+per-pair median 21.9 us x 999 candidates ~ 21.9 ms, matching the 20.1 ms measured here directly,
+independently, at the whole-query level). **The certified method is ~2x FASTER than the
+uncompressed filter for polylines** (20.1 ms vs. 41.7 ms) -- the cheap compressed representation
+plus the interval rule beats reading every surviving raw candidate, even though S6b (M3) shows it
+is slower than the *uncompressed* representation's approximate (no-guarantee) shortcut. For
+**splines, this reverses**: certified-spline (57.1 ms) is *slower* than filter_uncompressed
+(41.7 ms) -- the spline's own `Lin(A')` linearization vertices are more numerous/costly to run
+`decide()` against than the raw polyline is, an additional way splines under-perform polylines in
+this store (alongside M2's certificate looseness and M3's wider interval/higher refine rate).
+
+### M4 Conclusions: the three research questions (spec section 1), with numbers
+
+**Q1: can `d_F` between a polyline and a spline be certified strictly and densely?** Yes for both
+representations via section 2.4 (ADR-0018): S1/S2 100% (M1/M2), median `eps_A/LB` 1.0 (polylines,
+M1) and 1.019 (splines, M2), both well under S3's density thresholds (`<=1.2`/`<=2`). The spec's
+own *primary* spline path (section 2.3) does **not** clear this bar in practice -- only 16.4%
+availability and a 1.68x looser median `eps_A` than 2.4 (M2) -- resolved by ADR-0018 (2.4 primary,
+2.3 kept as a verified but non-default alternative), not by weakening the density criterion.
+
+**Q2: what fraction of queries resolves via approximations without reading the source?** Highly
+`r`-dependent, not a single number: at `r=200`/`r=1000` (M3), 84-96% of post-cheap-filter
+candidates resolve without touching originals (S5 passes); at `r=50`, only 58-62% at the M1/M2
+`tol=10` operating point (S5 fails) -- but this milestone's trade-off curve (above) shows a
+tighter `tol=1` polyline representation recovers 92.9% at `r=50`, for a modest (+16.5%) size cost.
+The answer is genuinely "it depends on `r` and the chosen representation tolerance," not a fixed
+percentage -- exactly the kind of nuance a single headline number would have hidden.
+
+**Q3: what does dropping the guarantee cost?** Small but real and nonzero everywhere it was
+measured (table above): 0.03-3.03% miss rates, 0.00-2.04% false-positive rates, worst at short
+range and consistently worse for splines. Never zero -- the certified method's own S4 result
+(0/0 across 6,000,000 combinations, M3) is the actual zero-error guarantee; the approximate
+method's errors are the quantified price of not having it.
+
+**Certified vs. its two competitors, stated plainly**: the certified method is **~2x faster than
+the filter without compression** for polylines (M3 per-pair: 21.9 us vs. 43.0 us; this milestone's
+per-query: 20.1 ms vs. 41.7 ms, independently consistent) -- compression plus the interval rule
+genuinely earns its keep against reading raw originals. **At the same time, S6b (M3) is failed**:
+the certified method is 2.7x-4.4x *slower* than the uncompressed, no-guarantee approximate
+method, because guaranteeing correctness costs up to two `decide()` calls where the shortcut needs
+one. Both facts are true simultaneously and answer different questions: certification is cheaper
+than not compressing, and more expensive than compressing without a guarantee.
+
+**Splines lose to polylines on every axis measured in this store**: looser certificates (M2:
+median `eps_A/reference` 1.70 vs. polylines' 1.0-1.02), wider intervals (M3: median `2*sum_eps`
+31.9 m vs. 30.8 m, heavier tail -- max 86.8 m vs. 39.7 m), a higher refine rate at every `r` (M3:
+e.g. `r=50` 42.1% vs. 38.3%), higher approximate-search error rates (this milestone: roughly 2x
+polylines' at every `r`), and (this milestone) slower per-query certified latency relative to the
+uncompressed filter, where polylines are faster. Splines remain correct and usable (S1/S2 100%,
+S3 density 1.019) -- they are simply the costlier representation in this store on every dimension
+that was measured, not a broken one.
+
+**ADR summary**: nineteen ADRs (`docs/decisions/README.md`) cover the full M0-M4 decision history;
+no new ADR was needed for M4 itself (a measurement/reporting milestone, no new design decisions).
+
+**Open issues**: `docs/phases/step7_summary.md` (this milestone) and gate G1's checklist
+(`docs/ROADMAP.md`) are the last step7 artifacts -- see both for the phase-level summary and the
+gate decision.

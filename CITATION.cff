@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+message: "If you use this work, please cite it as below"
+type: software
+title: "CurvaDB: certified curve store and a negative result on splines for trajectory storage"
+version: "1.0"
+date-released: "2026-09-20"
+authors:
+  - family-names: "Galukhin"
+    given-names: "Artem"
+repository-code: "https://github.com/artsensiva/CurvaDB-en"
+doi: "10.5281/zenodo.22850470"
+license: MIT
+abstract: >-
+  A cubic B-spline does not compress real GPS trajectories better than a
+  Douglas-Peucker-simplified polyline (negative). Removing every confound --
+  polyline tethering, fitter weaknesses, noise, sampling sparsity -- still
+  does not save the spline; even an oracle fit to the true curve is not more
+  compact than DP+SED (negative). A free-knot spline oracle fit directly to
+  the true curve still does not beat DP+SED by the required margin, closing
+  hypothesis H1 (negative). A certified curve store answers continuous-Frechet
+  range queries over compressed trajectories with a provable error bound,
+  correctly and cheaper than an honest uncompressed exact competitor
+  (positive). That same store's spec-designated primary spline certificate
+  mechanism does not work as designed, and the correctness guarantee has a
+  real, measured price (negative). Full detail: docs/REPORT.md.
+keywords:
+  - trajectory data
+  - Frechet distance
+  - B-splines
+  - certified bounds
+  - negative results
+  - GeoLife

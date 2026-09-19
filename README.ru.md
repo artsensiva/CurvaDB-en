@@ -2,6 +2,28 @@
 
 English version: [README.md](README.md)
 
+## Цитирование
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22850470.svg)](https://doi.org/10.5281/zenodo.22850470)
+
+Если вы используете эту работу, пожалуйста, цитируйте её так:
+
+> Galukhin, A. (2026). *CurvaDB: certified curve store and a negative result on splines for
+> trajectory storage* (Version 1.0) [Software]. https://doi.org/10.5281/zenodo.22850470
+
+```bibtex
+@software{galukhin_curvadb_2026,
+  author  = {Galukhin, Artem},
+  title   = {CurvaDB: certified curve store and a negative result on splines for trajectory storage},
+  year    = {2026},
+  version = {1.0},
+  doi     = {10.5281/zenodo.22850470},
+  url     = {https://doi.org/10.5281/zenodo.22850470}
+}
+```
+
+Полные метаданные цитирования: [CITATION.cff](CITATION.cff).
+
 Полный технический отчёт (все этапы, все ADR, все критерии и цифры, один документ):
 [docs/ru/REPORT.md](docs/ru/REPORT.md).
 

@@ -25,7 +25,7 @@ range queries skip reading the source data? Full detail: `benchmarks/results/ste
 | S3 (fallback rate) | `<=10%` of splines via 2.4 | **FAILED for section 2.3**: 83.6% -- resolved by ADR-0018 (2.4 made primary), not revised |
 | S4 | 0 misses / 0 false positives | **100%** (0/0 across 6,000,000 combinations, M3) |
 | S5 | `>=80%` at `r=200`, either representation (spec's own literal wording) | **passes**: 84.8% (polyline), 83.7% (spline) |
-| S5, extended (M3's own choice, beyond spec's literal `r=200`-only scope) | same bar, checked at `r=50`/`r=1000` too | `r=1000` passes (95-96%); `r=50` **falls short** (58-62% at the M1/M2 operating `tol`; recoverable to 92.9% at a tighter `tol=1`, M4) |
+| S5, extended (M3's own choice, beyond spec's literal `r=200`-only scope) | same bar, checked at `r=50`/`r=1000` too | `r=1000` passes (95-96%); `r=50` **falls short** (58-62% at the M1/M2 operating `tol`; recoverable to 93.3% at a tighter `tol=1`, at a real 5.1x storage cost, M4/ADR-0020) |
 | S6a | certificate `<=16` bytes/track | **passes** (8 bytes) |
 | S6b | query time `<=2x` approximate search | **FAILED**: 2.7x-4.4x (structural: two `decide()` calls vs. one) |
 

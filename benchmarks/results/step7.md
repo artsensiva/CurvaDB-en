@@ -754,26 +754,39 @@ shortfalls (M3).
 
 ### 2. Trade-off curve: DP+SED `tol` vs. certificate, size, and refine rate (polylines)
 
-100-track subsample (70 base + 30 near-duplicates targeting `r in {50, 200}`, for a measurable
-refine rate at `r=50` -- a plain random sample has essentially no pairs that close, per M3's own
->99.9% cheap-filter-rejection finding), 200 queries:
+**Corrected after M4.1** (ADR-0020): the numbers first reported here showed certificate size
+almost insensitive to `tol` (717.5 vs. 616.0 bytes/track, `tol=1` vs. `tol=20` -- only a 16%
+spread, contradicting step1's own ~4.8x finding over the same range). Investigated: not a
+`quantized_bytes` encoding bug (it correctly encoded the simplified vertices) but a degenerate
+placeholder time array (`t=zeros`) fed to the time-aware DP+SED simplifier, silently collapsing
+its synchronized-position interpolation and causing systematic vertex over-retention almost
+independent of `tol`. Fixed (`traj.simplify` now raises `ValueError` on a degenerate `t` instead
+of silently mismeasuring, ADR-0020); the table below is the corrected re-run, same 100-track
+subsample (70 base + 30 near-duplicates targeting `r in {50, 200}`, for a measurable refine rate
+at `r=50` -- a plain random sample has essentially no pairs that close, per M3's own >99.9%
+cheap-filter-rejection finding), 200 queries:
 
 | `tol` (m) | median `eps_A` (m) | bytes/track (quantized + zlib) | S5 at `r=50` | S5 at `r=200` |
 |---|---|---|---|---|
-| 1 | 0.18 | 717.5 | **92.9%** | 100.0% |
-| 2 | 0.73 | 713.0 | 78.6% | 94.1% |
-| 5 | 2.12 | 694.5 | 50.0% | 94.1% |
-| 10 | 4.51 | 656.5 | 33.3% | 91.4% |
-| 20 | 7.31 | 616.0 | 21.1% | 82.5% |
+| 1 | 0.87 | 535.0 | **93.3%** | 100.0% |
+| 2 | 1.76 | 441.5 | 64.7% | 94.1% |
+| 5 | 4.26 | 250.0 | 25.0% | 94.3% |
+| 10 | 8.26 | 162.5 | 14.3% | 86.5% |
+| 20 | 13.52 | 105.5 | 18.2% | **69.2%** |
 
-**`tol <= 1` m is needed to clear S5's 80% bar at `r=50`** in this sample (`tol=2` already falls
-short at 78.6%); the cost is modest -- 717.5 vs. 616.0 bytes/track (quantized+zlib estimate,
-`benchmarks/step7_m4.py`'s `quantized_bytes`: 1 cm grid, int32, zlib level 9 -- a simple,
-documented estimate, not a production codec) is a **+16.5% size increase** for the tight `tol=1`
-representation compared to the loose `tol=20` one, in exchange for going from 21% to 93% of
-short-range candidates resolved without reading originals. `r=200` clears 80% at every `tol`
-tested, consistent with M3's own full-corpus finding (S5 at `r=200` passes regardless of the
-tighter M1/M2 `tol=10` used elsewhere in this document).
+Size now depends strongly on `tol`, as expected -- 535.0 down to 105.5 bytes/track, a **5.1x**
+spread (quantized+zlib estimate, `benchmarks/step7_m4.py`'s `quantized_bytes`: 1 cm grid, int32,
+zlib level 9 -- a simple, documented estimate, not a production codec), consistent with step1's
+own ~4.8x finding once the simplifier is actually seeing real timestamps. **`tol <= 1` m is
+needed to clear S5's 80% bar at `r=50`** in this sample (`tol=2` already falls to 64.7%) -- the
+cost of that tight `tol` is now a real **5.1x** size increase over `tol=20`, not the "modest 16%"
+the bug made it look like. **`r=200` no longer clears 80% at every `tol`**: `tol=20` now falls to
+69.2% -- correcting the earlier (bug-affected) claim that `r=200` passed regardless of `tol`;
+M1/M2's own operating point (`tol=10`) still clears it (86.5%). The `tol=10`-to-`tol=20` uptick
+in `r=50`'s own S5 (14.3% to 18.2%) is not a real reversal -- the post-cheap-filter survivor count
+at `r=50` is small (single digits) at these coarse `tol` values in this 100-track sample, so that
+specific step is sample-size noise, not a trend; the overall tol-vs-S5(r=50) direction (tighter
+`tol` -> much higher S5) is unambiguous and is the one this section's conclusion rests on.
 
 ### 3. Per-query latency at `r=200` (median/p95 across queries, not per-pair)
 
@@ -812,10 +825,11 @@ Checking the *same* question at other `r`'s (M3's own choice, beyond the letter 
 fuller picture) finds `r=1000` even better (95-96%) but `r=50` short of the same 80% bar (58-62%
 at the M1/M2 `tol=10` operating point) -- this is a real, worth-reporting limitation, but it is an
 *extension* of S5's own literal scope, not a failure of the S5 criterion the spec actually
-states. This milestone's trade-off curve (above) shows a tighter `tol=1` polyline representation
-recovers 92.9% at `r=50`, for a modest (+16.5%) size cost -- so the fuller answer is genuinely "it
-depends on `r` and the chosen representation tolerance," which the spec's own single-`r`
-criterion does not by itself reveal.
+states. This milestone's (corrected, ADR-0020) trade-off curve (above) shows a tighter `tol=1` polyline
+representation recovers 93.3% at `r=50`, for a real 5.1x size cost over `tol=20` -- so the fuller
+answer is genuinely "it depends on `r` and the chosen representation tolerance, and tightening it
+enough to fix `r=50` is not free," which the spec's own single-`r` criterion does not by itself
+reveal.
 
 **Q3: what does dropping the guarantee cost?** Small but real and nonzero everywhere it was
 measured (table above): 0.03-3.03% miss rates, 0.00-2.04% false-positive rates, worst at short

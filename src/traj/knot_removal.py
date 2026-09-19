@@ -67,8 +67,16 @@ def _full_knot_vector(u_min: float, u_max: float, internal: np.ndarray, k: int) 
 
 
 def _lsq_refit(u: np.ndarray, xy: np.ndarray, internal_knots: np.ndarray, k: int) -> BSpline:
+    """`make_lsq_spline` can succeed (no exception) yet return NaN/Inf
+    coefficients for a near-degenerate knot set (e.g. removal leaving too
+    little data support between neighboring knots) -- raises ValueError in
+    that case too, so every caller's existing except-ValueError handling
+    covers it without a separate check at each call site."""
     full_knots = _full_knot_vector(float(u[0]), float(u[-1]), internal_knots, k)
-    return make_lsq_spline(u, xy, full_knots, k=k)
+    bs = make_lsq_spline(u, xy, full_knots, k=k)
+    if not np.all(np.isfinite(bs.c)):
+        raise ValueError("LSQ refit produced non-finite control points (degenerate knot removal)")
+    return bs
 
 
 def _rank_removal_order(u: np.ndarray, xy: np.ndarray, internal_knots: np.ndarray, k: int) -> np.ndarray:

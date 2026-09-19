@@ -1,7 +1,7 @@
 # Certificates instead of trust: exact trajectory search on compressed data
 
 This is a follow-up to the post about [how a cubic spline lost to the Douglas-Peucker
-polyline](https://github.com/artsensiva/CurvaDB-en). That earlier result was negative: a smooth
+polyline](blog_draft.md). That earlier result was negative: a smooth
 curve gives no advantage for storing GPS tracks. But that project left a side effect that turned
 out more interesting than the hypothesis itself: **the verification discipline** — an oracle,
 criteria fixed before the run, error measured against ground truth rather than against your own

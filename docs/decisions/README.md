@@ -61,3 +61,6 @@ Commits, reports (`benchmarks/results/step7.md`), reviews (`docs/reviews/`), oth
 | [0018](ADR-0018-2-4-primary-spline-certificate.md) | Section 2.4 becomes the primary spline certificate; section 2.3 excluded from the pipeline | Accepted |
 | [0019](ADR-0019-interval-queries-design.md) | Interval queries (section 2.5): `eps_A` already equals `epsilon+lambda`, decide-only rule | Accepted |
 | [0020](ADR-0020-degenerate-time-breaks-sed.md) | A degenerate time array silently breaks SED simplification (M4's trade-off curve) | Accepted |
+| [0021](ADR-0021-certificate-is-additional-not-gating.md) | Step8's reachability gate stays step3's honest-curve error; certificates are additional | Accepted |
+| [0022](ADR-0022-spline-fitter-and-lam-for-m1-m2.md) | Spline segment fitter and `lam_fallback` for M1/M2 (pre-registered rule) | Accepted |
+| [0023](ADR-0023-knot-removal-lam-and-internal-tol.md) | `knot_removal.py`'s certification `lam_fallback` and internal-tol strategy (segment-scale budget) | Accepted |

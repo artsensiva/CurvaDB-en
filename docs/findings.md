@@ -134,9 +134,10 @@ oracle is 457 bytes, DP+SED is 467 bytes (`step3.md` §2, the oracle
 table and the DP+SED table at dt=1s, sigma=0). A spline fit directly to
 the exact, noise-free curve, with not a drop of noise or sampling
 sparsity -- with UNIFORM knots -- gives no byte advantage over the
-simplified polyline. This is NOT a test of optimal/adaptive knot
-placement (see "Conclusion" below) -- the question remains open as
-hypothesis H1.
+simplified polyline. At the time, this was NOT a test of optimal/
+adaptive knot placement (see "Conclusion" below) -- that question
+became hypothesis H1, since closed by step8 (see "Closed hypotheses"
+below).
 
 ## Key numbers (summary)
 
@@ -161,10 +162,11 @@ theoretical limit of spline representability in general. In step2
 (`step2.md` §3), FITPACK's adaptive knots (`splprep`) gave ~0.70x the
 control points of naive uniform knots on the tracks tested -- optimal
 knot placement could meaningfully reduce the parameter count and bring
-it closer to criterion K1 (30% compression). This was not tested. So the
-correct phrasing is: **under the conditions tested (uniform knots for
-the oracle), there is no compression advantage; optimal knot placement
-on exact data is untested** -- see hypothesis H1 below. Also, even a
+it closer to criterion K1 (30% compression). At the time, this was not
+tested -- it became hypothesis H1, now closed: step8's free-knot oracle
+(greedy certified knot removal directly on the true curve, spec section
+2.6) tested exactly this and still found no advantage (see "Closed
+hypotheses" below). Also, even a
 hypothetical ~30% byte savings would not by itself be product value: a
 GPS track already takes up a few kilobytes, and savings of that order
 aren't a bottleneck in any of the use cases considered.
@@ -211,27 +213,34 @@ But the oracle itself uses ONLY uniform knots (see the caveat in
 "Conclusion" above) -- that's its own limitation, not inherited from the
 list above. With that caveat: under the conditions tested (uniform
 knots), there is no compression advantage; the conclusion's robustness
-to optimal knot placement was not tested -- that's exactly hypothesis H1
-below.
+to optimal knot placement was, at the time, untested -- that became
+hypothesis H1, now closed (see "Closed hypotheses" below).
+
+## Closed hypotheses
+
+### H1 (compression): free/optimal knots on exact data -- CLOSED (step8)
+
+Adaptive knot placement driven by the true curve's own geometry (not
+uniform, as in step3's `fit_oracle`, and not driven by a noisy trial
+fit's residuals, as in `fit_adaptive`) could in principle give a more
+compact representation on EXACT (noise-free) data than DP+SED, placing
+knots where the geometry is genuinely more complex -- left open by
+step3 because its own oracle only tested uniform knots.
+
+**Tested and closed in step8** (`docs/specs/step8_A_hybrid.md`, section
+2.6's free-knot oracle: greedy, certified knot removal applied directly
+to a dense sample of the true curve -- `src/traj/knot_removal.py`,
+`benchmarks/results/step8.md`'s M1 section, criterion A3). Even this
+free, geometry-driven knot placement does not beat DP+SED by the
+required 20%: at no tested tolerance does the oracle/DP+SED byte ratio
+clear 0.80x (tol=0.5 m: 1.050x; tol=2 m: 0.834x, the closest miss;
+tol=10 m: 0.879x). Applying spec section 8's decision rule verbatim:
+H1 is closed -- even a free-knot spline on the ideal curve is not more
+compact than DP+SED by 20%, under the conditions tested. Full detail
+and the exact same-basis methodology: `docs/reviews/step8_M1.md`,
+`docs/phases/step8_summary.md`.
 
 ## Open hypotheses (untested)
-
-There used to be one vague "open hypothesis" here about kappa(t). After
-checking `fit_oracle()`'s code (see "Conclusion" above), it splits into
-two distinct questions -- a research one (fully closing the compression
-hypothesis) and a product one (finding a use case where H1 doesn't
-matter) -- worth separating explicitly.
-
-### H1 (compression): free/optimal knots on exact data
-
-Adaptive knot placement driven by the true curve's curvature profile
-kappa(t) -- rather than by the residuals of a noisy trial fit, as in
-step3's `fit_adaptive`, and not uniform, as in `fit_oracle` -- could (in
-principle) give a more compact representation on EXACT (noise-free)
-data, placing knots where the geometry is genuinely more complex. Not
-implemented or tested. Not a priority: see the resolution in
-[docs/next_steps.md](next_steps.md) -- even if H1 is confirmed, a ~30%
-byte savings is not product value by itself.
 
 ### H2 (product): analytical derivatives and search by kappa(t) on exact data
 
@@ -294,3 +303,15 @@ unconfirmed -- to be checked via interviews, not code (see
     otherwise a method can look accurate simply by describing its own
     noise well (see step0_diagnostics.md and the step3 discovery of
     non-monotone error vs. the fitter's internal parameter).
+- **A certificate on the continuous Fréchet distance is a shape
+  guarantee, not a time-synchrony guarantee.** It permits the
+  reconstruction to lead or lag the original curve in time, as long as
+  the two stay close in space -- a legitimate Fréchet-optimal
+  correspondence. If an application needs synchrony (matching position
+  at the SAME timestamp, not just the same place at some time), use SED
+  or L2 error instead, not a Fréchet certificate. Found while closing
+  H1 (step8, `docs/specs/step8_A_hybrid.md` section 2.6's free-knot
+  oracle): certified knot removal reached 100% `eps_A<=tol` at every
+  tested tolerance, while reachability under a fixed, time-synchronized
+  criterion fell from 86.7% to 66.7% as the tolerance grew -- a property
+  of the Fréchet metric itself, not specific to H1 or to this fitter.

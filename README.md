@@ -2,14 +2,20 @@
 
 Русская версия: [README.ru.md](README.ru.md)
 
-Research question: does storing GPS trajectories as cubic B-splines beat
-the classic "Douglas-Peucker (DP) simplification + search by discrete
-Fréchet distance" scheme? Bottom line: a negative result on compression
+The project now has two parts. The first (`step0`-`step3`) is a completed research study: does
+storing GPS trajectories as cubic B-splines beat the classic "Douglas-Peucker (DP) simplification
++ search by discrete Fréchet distance" scheme? Bottom line: a negative result on compression
 for consumer GPS; for high-precision data, no advantage was found under the
 conditions tested either, but the question isn't fully closed (see
-hypothesis H1 in [docs/findings.md](docs/findings.md)). The project concludes
-as a research study — the next step is not code, but industry
+hypothesis H1 in [docs/findings.md](docs/findings.md)). That study concludes
+as research — the next step for it is not code, but industry
 interviews (see [docs/next_steps.md](docs/next_steps.md)).
+
+The second part, **step7**, is a positive result: a certified curve store that answers range
+queries over compressed trajectories with a provable guarantee on the true continuous Fréchet
+distance, cheaper than reading the originals for most candidates. Gate G1
+(`docs/ROADMAP.md`) is open — see
+[Certified curve store (step7)](#certified-curve-store-step7) below.
 
 ## Stages
 
@@ -27,6 +33,33 @@ interviews (see [docs/next_steps.md](docs/next_steps.md)).
 
 Full timeline with numbers and commits — [docs/history.md](docs/history.md).
 
+## Certified curve store (step7)
+
+A second research question, further along in the same repository: can a curve store answer
+range queries over *compressed* trajectories with a provable guarantee on the true continuous
+Fréchet distance, instead of reading the original data for every candidate? Answer: yes, with
+real, quantified trade-offs. Gate G1 (`docs/ROADMAP.md`) is open.
+
+- Exact-guarantee search on compressed data: **0 misses and 0 false positives across 6,000,000**
+  (query, candidate, range, representation) combinations tested.
+- The certified method is **twice as fast as an exact filter without compression** (20.1 ms vs.
+  41.7 ms median per query) — even though it is slower than an *uncertified* approximate search
+  on the same compressed data, a separate, documented trade-off (S6b).
+- The price of dropping the guarantee, quantified: an uncertified approximate search on the same
+  compressed data still misses **0.03-3.03%** of true answers.
+- A tolerance/size trade-off for the polyline representation: tightening the simplification
+  enough to resolve short-range queries without reading originals costs a real **5.1x** more
+  storage per track.
+- A negative result inside the positive one: the spec's own *primary* spline certificate
+  (section 2.3) is available for only **16.4%** of real tracks and, where available, is **1.68x**
+  looser than its own documented fallback (section 2.4) — resolved by making that fallback the
+  default (`docs/decisions/ADR-0018-2-4-primary-spline-certificate.md`).
+
+Full detail: [docs/phases/step7_summary.md](docs/phases/step7_summary.md) (one-page gate
+summary), [docs/specs/step7_B_certified_store.md](docs/specs/step7_B_certified_store.md) (the
+spec), [benchmarks/results/step7.md](benchmarks/results/step7.md) (all milestone results, M0-M4),
+[docs/decisions/](docs/decisions/) (20 ADRs, the full decision history).
+
 ## Documents
 
 - [docs/history.md](docs/history.md) — the full project history, from
@@ -43,7 +76,13 @@ Full timeline with numbers and commits — [docs/history.md](docs/history.md).
 - [docs/prompts/](docs/prompts/) — the step3-step5 prompts (step0-step2
   were given in chat, summarized in `docs/prompts/README.md`).
 - [benchmarks/results/](benchmarks/results/) — raw results for each
-  step (step0.md, step0_diagnostics.md, step1.md, step2.md, step3.md).
+  step (step0.md, step0_diagnostics.md, step1.md, step2.md, step3.md, step7.md).
+- [docs/ROADMAP.md](docs/ROADMAP.md) — the step7 phase/gate roadmap (G0-G7),
+  the decision log, and the risk register.
+- [docs/decisions/](docs/decisions/) — architecture decision records (ADRs)
+  for step7: 20 entries, template and index in `docs/decisions/README.md`.
+- [docs/phases/](docs/phases/) — one-page summaries written at each gate
+  (currently `step7_summary.md`, gate G1).
 
 ## Setup
 
@@ -73,6 +112,14 @@ venv/bin/python benchmarks/step2_crossover.py --pilot  # niche search (pilot)
 venv/bin/python benchmarks/step2_crossover.py          # niche search (full run)
 venv/bin/python benchmarks/step3_decisive.py --pilot   # decisive experiment (pilot)
 venv/bin/python benchmarks/step3_decisive.py           # decisive experiment (full run)
+
+# step7 -- certified curve store (docs/specs/step7_B_certified_store.md)
+venv/bin/python benchmarks/step7_certify.py            # M0-M1: polyline + spline (section 2.4) certificates
+venv/bin/python benchmarks/step7_m13_fitters.py        # M1.3: fitter comparison (fit_adaptive vs spline.fit())
+venv/bin/python benchmarks/step7_m13_tail.py           # M1.3: eps_A/LB tail verification
+venv/bin/python benchmarks/step7_m2_projection.py      # M2: primary spline certificate (section 2.3), full corpus
+venv/bin/python benchmarks/step7_query.py              # M3: interval range queries, full corpus + near-duplicates
+venv/bin/python benchmarks/step7_m4.py                 # M4: error rates, tol/size trade-off, per-query latency
 ```
 
 Each script writes its own section to `benchmarks/results/<step>.md`.

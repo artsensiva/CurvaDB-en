@@ -383,3 +383,178 @@ step8 was built to close (section 10). A second, unrelated question (H2: are a s
 analytical derivatives valuable for search by shape/kinematics, independent of compression) was
 never tested at all, pending the industry interviews Stage C recommended and that were never
 conducted (section 12).
+
+## 9. step7: the certified curve store
+
+**Question:** can a curve store answer range queries over *compressed* trajectories with a
+provable guarantee on the true continuous Fréchet distance, instead of reading the source data
+for every candidate -- and does the guarantee cost less than reading the source data outright?
+(`docs/specs/step7_B_certified_store.md`; results in `benchmarks/results/step7.md`, milestones
+M0-M4; gate summary `docs/phases/step7_summary.md`.)
+
+Unlike step0-step3 (one linear narrative), step7 progressed through a milestone review chain
+where a milestone's own author did not get to declare it finished: `docs/reviews/step7_M0.md`
+through `step7_M2.md` each required specific fixes before the next milestone could start.
+
+**M0 -- the continuous Fréchet metric itself.** Built the Alt-Godau free-space-diagram decision
+procedure and bisection-based distance (`src/traj/frechet_cont.py`, Numba), cross-checked
+against an independent `mpmath` high-precision oracle (worst deviation `9.97e-10` over 60+20
+small cases; `distance_upper >= distance_mp - 1e-9` on 30 GeoLife-scale cases, 30/30). Two
+review-driven corrections here became ADRs: a discriminant-clamp rounding choice that turned out
+to make the free-space check too *permissive* (dangerous for an upper bound) was replaced by a
+strict check (ADR-0003, superseded by ADR-0004); a global-coordinate-scale margin in
+`decide_conservative`/`distance_upper` was replaced by recentering plus a local per-cell margin
+(ADR-0005, superseded by ADR-0006) after the reviewer found the same "safe-looking rounding is
+actually unsafe" pattern a second time.
+
+**M1 -- polyline and linearization certificates (S1, S2).** Exact polyline certificates (spec
+section 2.2) and certified linearization for splines (section 2.4, the documented fallback path)
+-- `src/traj/certify.py`. M1.1 fixed a real spec error found while implementing it (section 2.4
+claimed certified linearization is "always applicable"; false -- 46/585 tracks failed to
+certify) via root-splitting at the derivative's projection roots plus a small-ball rule
+(ADR-0008), without editing the frozen spec text. M1.2/M1.3 (`docs/reviews/step7_M1_2.md`,
+`step7_M1_3.md`) chased down a measurement bug: the S2 fit-validity check evaluated splines at
+the wrong parametrization domain, making its 93.8%/17.9% invalid-fit numbers measurement
+artifacts, not a real finding (ADR-0014); once fixed, a pre-registered rule (ADR-0013) compared
+`spline_lsq`'s fitters against `spline.py`'s dense-error-controlled `fit()` and selected
+`fit()` outright at step 1 (100% vs. 90.1% valid, a 9.9-point gap above the rule's own 5-point
+tie-break threshold) -- a deliberate, recorded deviation from the spec's literal text (which
+names `spline_lsq`), not a silent one.
+
+**M2 -- the spec's *primary* spline certificate (section 2.3, monotone projection matching), and
+its failure.** Full 585-track validation found section 2.3 certifies only **96/585 (16.4%)**
+of tracks, and where it does succeed its `eps_A` is a **median 1.68x larger** than section 2.4's
+own -- the spec's designed-as-primary path is both less available and less tight than its own
+documented fallback. Independently confirmed as a *correct* certificate wherever it applies (not
+an implementation bug): a genuine Hausdorff lower bound on all 585 tracks, a genuine mpmath-based
+lower bound on a 30-track sample, and direct dense-sampling verification of section 2.3's own
+formula on every track it certified all agree. The structural cause (ADR-0016): section 2.3
+certifies each piece against the original track's *fixed* per-vertex segment direction, so a
+single non-monotone piece relative to that fixed direction (common, roughly 1.87% of pieces)
+forces the whole track to fall back, and with ~242 pieces/track this compounds to an 83.6%
+track-level fallback rate even though individual piece failures are rare.
+
+**Gate-level decision (ADR-0018, `docs/reviews/step7_M2.md`):** S3's `<=10%` fallback-rate
+criterion is **not** waived or rescored -- it failed, plainly, as written. The response is an
+architecture change, not a criterion change: **section 2.4 becomes the primary and default
+spline certificate**; section 2.3 stays in the codebase (`certify_spline_projection`), fully
+tested, available as an explicit opt-in for research use, but excluded from the default
+pipeline (`certify_spline`'s `use_projection` parameter defaults to `False`). Section 2.4 alone
+already certifies 100% of tracks with a dense median `eps_A/LB` of 1.019.
+
+**M3 -- interval range queries (S4, S5).** Built the decide-only interval rule (spec section
+2.5, `src/traj/intervals.py`): accept if the certified interval's upper end is `<=r`, reject if
+the lower end already exceeds `r`, read the source only if `r` falls inside the interval. Full
+scale: 1000 queries x 3 ranges x 2 representations, 6,000,000 (query, candidate, range,
+representation) combinations, plus 415 near-duplicate tracks engineered to guarantee coverage of
+the hard `r +/- 2*sum_eps` regime. **S4: 0 misses and 0 false positives across all 6,000,000
+combinations.** **S5** (fraction of candidates resolved without reading source data, among
+post-cheap-filter survivors): `r=200`: 84.8%/83.7% (polyline/spline), `r=1000`: 95.6%/95.0% --
+both clear the spec's own `>=80%` bar; `r=50`: 61.7%/57.9%, **short of 80%** (a criterion the
+spec's own literal wording only requires at `r=200`, so this is reported as an informational
+extension, not a spec failure).
+
+**M4 -- the price of both guarantees, and three near-misses.** Measured the price of *dropping*
+the certificate: an uncertified approximate search on the same compressed data still misses
+0.03%-3.03% of true answers and returns up to 2.04% false positives -- small, but never zero,
+and unpredictable per query. Measured the price of the *tolerance/size* trade-off for polylines:
+tightening DP+SED's simplification from `tol=20` to `tol=1` raises `r=50`'s resolved-without-
+reading fraction from 18.2% to 93.3%, at a real **5.1x** storage cost (bytes/track: 105.5 to
+535.0) -- this exact number was itself the product of catching a bug (below). **S6a** (certificate
+size `<=16` bytes/track): **passes**, 8 bytes/track. **S6b** (query time `<=2x` an uncertified
+approximate search): **fails**, the certified method is **2.7x-4.4x slower**, a structural cost
+of guaranteeing correctness (up to two `decide()` calls where the uncertified shortcut needs
+one), not a fixable inefficiency.
+
+Three measurement bugs were found and fixed during M0-M4, all following the same pattern
+(section 11 generalizes it): the discriminant-clamp and parametrization-domain bugs above, plus
+one specific to M4 -- a synthetic `Track` object built with `t=np.zeros(...)` (a constant, fake
+time array) silently broke SED's time-synchronized interpolation, making the tol/size trade-off
+curve look nearly flat (16% spread) when the real spread, once fixed, was 5.1x (ADR-0020).
+
+**Outcome, all six criteria (S1-S6, spec section 8), reused verbatim from `docs/phases/
+step7_summary.md`:**
+
+| # | Criterion | Result |
+|---|---|---|
+| S1 | Polyline certificate correctness | **100%** (585/585 vs. mpmath) |
+| S2 | Spline certificate correctness | **100%** (585/585, section 2.4) |
+| S3 (density) | median `eps_A/LB` | **passes**: 1.0 (polylines, `<=1.2`), 1.019 (splines, `<=2`) |
+| S3 (fallback rate) | `<=10%` of splines via 2.4 | **FAILED for section 2.3**: 83.6% -- resolved by ADR-0018 (2.4 made primary), not revised |
+| S4 | 0 misses / 0 false positives | **100%** (0/0 across 6,000,000 combinations, M3) |
+| S5 | `>=80%` at `r=200`, either representation (spec's own literal wording) | **passes**: 84.8% (polyline), 83.7% (spline) |
+| S5, extended (M3's own choice, beyond spec's literal `r=200`-only scope) | same bar, checked at `r=50`/`r=1000` too | `r=1000` passes (95-96%); `r=50` **falls short** (58-62% at the M1/M2 operating `tol`; recoverable to 93.3% at a tighter `tol=1`, at a real 5.1x storage cost, M4/ADR-0020) |
+| S6a | certificate `<=16` bytes/track | **passes** (8 bytes) |
+| S6b | query time `<=2x` approximate search | **FAILED**: 2.7x-4.4x (structural: two `decide()` calls vs. one) |
+
+**Gate decision:** open (`docs/ROADMAP.md` section 8, 2026-09-19). G1's own checklist requires
+S1, S2, S3-density, and S4 -- all four pass. S3's fallback-rate criterion and S6b are recorded as
+real, documented limitations of the spec's *original* design (not implementation defects -- both
+independently reconfirmed correct), not reopened.
+
+## 10. step8: the hybrid representation and closing H1
+
+**Question:** does a spline with free/adaptive knot placement, cut at explicit special points
+(sharp turns, stops, recording breaks) so each stretch can independently pick the cheaper of a
+line or a spline, close hypothesis H1 -- the one gap step3's own oracle (uniform knots only)
+left open? (`docs/specs/step8_A_hybrid.md`; results in `benchmarks/results/step8.md`, milestones
+M0-M1; gate summary `docs/phases/step8_summary.md`; milestone verdict `docs/reviews/step8_M1.md`.)
+
+**M0 -- a unified encoding, and a deliberate methodological guardrail.** Built one binary
+encoding shared by every representation (`src/traj/encode.py`, spec section 2.5), re-verifying
+step3's own DP+SED/LSQ-uniform byte counts through it exactly (reachability and parameter count
+matched cell for cell; byte counts differed by only 0-4 bytes, fully explained by the new
+format's explicit per-segment framing). A specific plan-review correction shaped the rest of the
+phase (ADR-0021): step7's certificates were brought in as a **separate, additional** correctness
+check (`certify_spline`'s `eps_A<=tol`), never as a replacement for step3's own reachability gate
+(honest error against the true curve) -- reusing a new, more rigorous tool is not license to
+silently swap out an established criterion.
+
+**M0.1/M0.2 -- why the spline's certified pass rate collapsed, and what to do about it.** The
+certified `eps_A<=tol` fraction for the spline fell sharply at tight `tol`, with two candidate
+explanations: `certify_spline`'s fixed `lam_fallback` margin, or the fitter's own uncontrolled
+oscillation between samples. Separated by direct measurement: sweeping `lam_fallback` alone
+moved the average certified fraction by ~0pp; switching from `spline_lsq.fit_uniform` to
+`spline.fit()` (which controls dense, between-sample error by construction) moved it by +32.4
+percentage points -- the fitter, not the margin, was the cause (ADR-0022). A follow-up refinement
+on the actually-selected fitter found the opposite pattern also holds once the fitter is already
+tight: `lam_fallback` then matters a great deal (70.0% down to 36.7% average pass rate from
+`lam=0.001` to `lam=0.1`), at a real, measured certification-time cost (~2.35s/track median at
+`lam=0.001`, ~11x slower than `lam=0.1`) that a segment-scale budget check (ADR-0023) showed was
+necessary information: the naive full-track-based projection for M2's full grid said 1045.0
+hours at `lam=0.001` (clearly unusable), while the segment-scale measurement brought that to a
+real 10.8 hours -- a 97x correction -- still over a 2-hour budget, which is why `lam_fallback`
+alone wasn't the whole fix (ADR-0023 also picked a tighter internal construction tolerance).
+
+**M1 -- knot removal, the free-knot oracle, and criterion A3.** Built certified-stopping greedy
+knot removal (`src/traj/knot_removal.py`, spec section 2.4: a cheap local ranking orders
+candidate knots, then bisection finds how many can be removed while still certifying `<=tol` --
+`O(log m)` certification calls, not `O(m)`) and the free-knot oracle (spec section 2.6: the same
+removal process applied directly to a dense sample of the *true* curve, no noise, no sparsity --
+step3's own oracle limitation, finally addressed). **Criterion A3** (H1's ceiling check: does the
+free-knot oracle beat DP+SED by 20%, on a smooth, noiseless curve, at all?) **fails, both
+formally and substantively.** Formally: spec section 8's own valid-cell definition (both compared
+methods reach `>=80%` reachability) is met by **no cell** -- at `tol=0.5` because DP+SED itself
+is only 33.3% reachable (unrelated to the oracle, reused from M0); at `tol=2`/`tol=10` because
+**the oracle's own reachability never reaches 80%** (73.3%, 66.7%), despite a certified
+`eps_A<=tol` fraction of a clean 100% at every tol. Substantively: none of the three tols' oracle/
+DP+SED byte ratios clear 0.80x anyway (0.5: 1.050x; 2: 0.834x, the closest miss; 10: 0.879x).
+
+**The headline technical finding of the milestone:** a certificate on the continuous Fréchet
+distance is a guarantee on *shape*, not on *time synchrony*. It permits the reconstruction to
+lead or lag the true curve in time as long as the two stay close in space -- a legitimate
+Fréchet-optimal correspondence with no obligation to preserve timing. Knot removal optimizes
+only the certified (Fréchet) criterion, so a coarser fit (more knots removed, more slack at
+looser `tol`) increasingly exploits this freedom -- exactly why the oracle's certified pass rate
+(100%) and its time-synchronized reachability (86.7% down to 66.7% as `tol` grows) diverge. This
+generalizes past H1 -- see section 11 and `docs/findings.md`'s "Reusable" section.
+
+**Applying spec section 8's H1 decision rule, verbatim:** *"A3 не выполнен -> «H1 закрыта: даже
+сплайн со свободными узлами на идеальной кривой не компактнее DP+SED на 20% в проверенных
+условиях»."* **H1 is closed.** M2 (the full hybrid construction: special-point detection,
+per-segment dynamic-programming cost selection) was **not run, not even in the spec's own
+reduced form** (A5/A6 sanity checks): H1's decision rule treats "A3 not met" as a complete,
+terminal conclusion; both halves of the hybrid (the plain spline, and now the free-knot ceiling
+itself) had already independently lost, leaving no baseline a DP-selected combination of the two
+could plausibly beat; A5/A6 would have validated the DP implementation, not gathered further
+evidence on H1 (`docs/reviews/step8_M1.md`).

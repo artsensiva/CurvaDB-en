@@ -240,3 +240,118 @@ tightly just above `tol` (p50/p90/max within a few cm of each other) rather than
 widely, meaning it is consistently *close* but not passing, unlike fit_uniform's wider, less
 predictable spread. This is a genuine limitation to carry into M1/M2, not resolved by either
 fitter or lam choice tested here.
+
+### M0.2
+
+Refines ADR-0022 on the fitter it actually selected (`spline.fit()`, not `fit_uniform`), and checks whether `lam_fallback` affects what M2 would store: `traj.encode.SplineSegment` encodes a spline's own control points, never `certify_spline`'s internal linearization `Lin(A')` -- the linearization vertex count and the segment's stored bytes are measured side by side below to confirm this rather than assume it.
+
+#### sigma=0, tol=0.5
+
+| lam_fallback | eps_A<=tol fraction | eps_A p50/p90/max | n (control pts) p50 | Lin(A') vertices p50 | segment bytes p50 | cert time p50/p90 (ms) |
+|---|---|---|---|---|---|---|
+| 0.001 | 53.3% (15 pop) | 0.494/0.507/0.513 | 274.0 | 2704.0 | 532B | 1354.56/2636.44 |
+| 0.01 | 33.3% (15 pop) | 0.503/0.516/0.522 | 274.0 | 880.0 | 532B | 324.10/670.40 |
+| 0.1 | 0.0% (15 pop) | 0.595/0.606/0.612 | 274.0 | 296.0 | 532B | 100.10/238.32 |
+
+#### sigma=0.1, tol=0.5
+
+| lam_fallback | eps_A<=tol fraction | eps_A p50/p90/max | n (control pts) p50 | Lin(A') vertices p50 | segment bytes p50 | cert time p50/p90 (ms) |
+|---|---|---|---|---|---|---|
+| 0.001 | 66.7% (15 pop) | 0.494/0.505/0.511 | 343.0 | 2955.0 | 609B | 1281.18/2815.31 |
+| 0.01 | 46.7% (15 pop) | 0.503/0.514/0.520 | 343.0 | 960.0 | 609B | 346.30/753.60 |
+| 0.1 | 6.7% (15 pop) | 0.589/0.603/0.613 | 343.0 | 321.0 | 609B | 110.99/282.08 |
+
+#### sigma=1, tol=2
+
+| lam_fallback | eps_A<=tol fraction | eps_A p50/p90/max | n (control pts) p50 | Lin(A') vertices p50 | segment bytes p50 | cert time p50/p90 (ms) |
+|---|---|---|---|---|---|---|
+| 0.001 | 93.3% (15 pop) | 1.796/1.969/2.163 | 412.0 | 4384.0 | 703B | 2087.41/3528.21 |
+| 0.01 | 93.3% (15 pop) | 1.805/1.978/2.166 | 412.0 | 1483.0 | 703B | 557.55/858.11 |
+| 0.1 | 73.3% (15 pop) | 1.875/2.074/2.247 | 412.0 | 490.0 | 703B | 185.89/307.78 |
+
+#### sigma=5, tol=10
+
+| lam_fallback | eps_A<=tol fraction | eps_A p50/p90/max | n (control pts) p50 | Lin(A') vertices p50 | segment bytes p50 | cert time p50/p90 (ms) |
+|---|---|---|---|---|---|---|
+| 0.001 | 66.7% (15 pop) | 9.188/11.212/12.135 | 436.0 | 9818.0 | 871B | 4679.78/8730.16 |
+| 0.01 | 66.7% (15 pop) | 9.199/11.220/12.148 | 436.0 | 3106.0 | 871B | 1301.62/3690.46 |
+| 0.1 | 66.7% (15 pop) | 9.329/11.300/12.271 | 436.0 | 1040.0 | 871B | 436.95/1031.61 |
+
+### Applying the refined lam rule
+
+| lam_fallback | avg eps_A<=tol fraction (4 cells) | avg Lin(A') vertices | avg segment bytes | avg cert time p50 (ms) |
+|---|---|---|---|---|
+| 0.001 | 70.0% | 4965.2 | 678.8B | 2350.73 |
+| 0.01 | 60.0% | 1607.2 | 678.8B | 632.39 |
+| 0.1 | 36.7% | 536.8 | 678.8B | 208.48 |
+
+default (smallest within 5pp of the lam=0.001 reference) is 0.001; tie-break set (equal average fraction, 70.0%): [0.001] -- chosen by smallest bytes then smallest time: 0.001. **Chosen lam_fallback: 0.001.**
+
+### tol=0.5 m spline availability (internal tol tighter than the 0.5 m target)
+
+Certified with the chosen lam_fallback (0.001).
+
+| sigma | internal tol | converged | eps_A<=0.5 fraction | eps_A p50 | eps_A min | n p50 |
+|---|---|---|---|---|---|---|
+| 0 | 0.25 | 15/15 | 100.0% | 0.250 | 0.188 | 514.0 |
+| 0 | 0.1 | 14/15 | 100.0% | 0.103 | 0.086 | 781.0 |
+| 0.1 | 0.25 | 14/15 | 100.0% | 0.247 | 0.215 | 736.0 |
+| 0.1 | 0.1 | 10/15 | 100.0% | 0.102 | 0.088 | 1042.0 |
+
+At least one internal-tol/sigma combination does certify `eps_A<=0.5` -- see the table above for which, and the M0.2 Conclusions below for the parameter-count cost.
+
+### M0.2 Conclusions
+
+**`lam_fallback` matters a great deal on `spline.fit()` -- the opposite of M0.1's finding on
+`fit_uniform`.** Average `eps_A<=tol` fraction across the 4 cells: 70.0% at lam=0.001, 60.0% at
+lam=0.01, 36.7% at lam=0.1 -- a real, monotonic 33.3pp swing, not the ~0pp M0.1 found for
+`fit_uniform`. The mechanism is the mirror image of M0.1's: `spline.fit()` already controls the
+*base* `d_F(A, Lin(A'))` term tightly (that's exactly what it's designed to do), so once that
+term stops dominating, the *additive* `lam` margin (0.001 to 0.1, a 0.099 spread) becomes the
+main lever left. Both findings are consistent with the same underlying picture, read together:
+`lam_fallback` only matters once the fitter itself is good enough that the base error isn't
+already blowing the budget on its own.
+
+**Bytes are confirmed lam-invariant, exactly as the encoding design predicts.** Segment bytes
+are bit-identical across all three tested `lam` values in every cell (532B/532B/532B at
+sigma=0/tol=0.5; 609B/609B/609B; 703B/703B/703B; 871B/871B/871B) -- because
+`traj.encode.SplineSegment` stores the fit's own internal knots and control points, never
+`certify_spline`'s internal linearization `Lin(A')`, which is produced and consumed entirely
+inside the certificate and discarded afterward. `lam` affects **only** `eps_A` and certification
+time, never what M2 would actually store. The `Lin(A')` vertex-count column shows why the time
+moves: at `sigma=5/tol=10`, the linearization needs a median of 9818 vertices at lam=0.001 vs.
+1040 at lam=0.1 (~9.4x more subdivision) purely to certify tightly enough for that lam, with no
+effect on the segment that eventually gets encoded.
+
+**That subdivision cost is real and large.** Median certification time per track, averaged
+across the 4 cells: 2350.7 ms at lam=0.001, 632.4 ms at lam=0.01, 208.5 ms at lam=0.1 -- an
+~11.3x spread. The worst single cell (`sigma=5/tol=10`) reaches 4679.8 ms median / 8730.2 ms p90
+at lam=0.001. This is the caveat this ADR refinement was specifically checking for (mirroring
+M0.1's `n`-confound caveat): the mechanical rule never even reaches this number, because
+lam=0.001's average fraction (70.0%) is not tied with lam=0.01 (60.0%, a 10pp gap) or lam=0.1
+(36.7%, a 33.3pp gap) -- both exceed the 5pp tie-break window, so the rule's primary criterion
+decides outright and the bytes/time tie-break is never consulted. **Applying the rule exactly as
+written still selects `lam_fallback=0.001`** -- but a ~2.35s median (and up to ~8.7s p90) per
+spline-segment certification is a real, measured cost M1/M2's actual DP cost function (spec
+section 2.2's `cost(i,j)`, evaluated `O(m*W)` times per track, spec section 2.3) needs to budget
+for explicitly, consistent with spec section 10's own generic "computation time" risk item --
+now with a concrete number attached rather than a vague concern.
+
+**tol=0.5 m spline availability: the opposite of what M0.1/M0.2's naive check suggested.**
+Calling `spline.fit()` directly at the 0.5 m target gave a certified pass fraction of at most
+53.3% (at the now-chosen lam=0.001) and as low as 0% (at lam=0.1) -- suggestive of unavailability.
+But asking `spline.fit()` to hit a substantially *tighter* internal tol first (0.25 m or 0.1 m,
+i.e. roughly half or a fifth of the actual 0.5 m target) and certifying the result with
+lam=0.001 certifies `eps_A<=0.5` for **100% of every converged track at every internal-tol/sigma
+combination tested** -- spline segments ARE certificate-available at `tol=0.5 m`, just not via
+the naive "fit directly at the target" construction this investigation and M0.1 both used for
+comparison. The cost is real: roughly 1.5x-3x more control points than the naive attempt (n
+median 514-1042 here vs. 274-343 at the naive target-tol fit in the lam-sweep table above).
+This validates spec section 2.4's actual planned M1 construction (start from a dense/interpolating
+spline, remove knots down to the certified limit) over the cruder direct-fit approach used for
+comparison purposes in M0/M0.1/M0.2 -- knot removal starting dense and backing off carefully is
+functionally what "aim well below the target, then verify" approximates here. **The earlier open
+question is resolved in the opposite direction from the hypothesis it was raised to test: at
+`tol=0.5 m`, a polyline-vs-spline choice in M2 is not forced by certificate unavailability; it
+remains a genuine cost/geometry trade-off, decided by `cost(i,j)`, not a construction-availability
+default.**

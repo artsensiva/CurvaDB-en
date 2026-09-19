@@ -81,6 +81,58 @@ knots, not purely eliminating between-sample oscillation. The one cell where `sp
 oscillation control is a real, non-trivial contributor -- not the whole story, but not an
 artifact either. Full breakdown: `benchmarks/results/step8.md`'s M0.1 Conclusions.
 
+## Refinement (M0.2, `benchmarks/step8_m02_lam_refine.py`)
+
+M0.1's `lam_fallback` sweep ran on `fit_uniform`, not on `spline.fit()` -- the fitter this ADR
+actually selected. M0.2 repeats the sweep on `spline.fit()` itself, adds two measurements the
+user asked for explicitly (the `Lin(A')` linearization vertex count, and the segment's actual
+encoded bytes), and checks `tol=0.5 m` spline availability with a tighter internal construction
+tol.
+
+**What `SplineSegment` stores, and what `lam` can and can't affect:** `traj.encode.SplineSegment`
+encodes a spline's own internal knots and control points (from the fit's `tck`), never
+`certify_spline`'s internal linearization `Lin(A')` -- that linearization is produced, used, and
+discarded entirely inside the certificate computation. Confirmed empirically, not assumed:
+segment bytes are bit-identical across all three tested `lam` values in every one of the 4 cells
+(e.g. 532B/532B/532B at `sigma=0/tol=0.5`). **`lam_fallback` can only ever affect `eps_A` and
+certification time, never what M2 would actually store.**
+
+**`lam_fallback`'s effect on `spline.fit()` is real, unlike on `fit_uniform`.** Average
+`eps_A<=tol` fraction across the 4 cells: 70.0% (lam=0.001), 60.0% (lam=0.01), 36.7% (lam=0.1) --
+a genuine 33.3pp spread, the opposite of M0.1's ~0pp finding on `fit_uniform`. Mechanism: once
+the fitter itself controls the *base* Fréchet term tightly (which is exactly what `spline.fit()`
+is designed to do), the *additive* `lam` margin becomes the dominant remaining lever -- the two
+M0.1/M0.2 findings are consistent, not contradictory, once read as "lam matters once the base
+error stops swamping it."
+
+**Applying the refined rule:** lam=0.001's average fraction (70.0%) is not tied with lam=0.01
+(60.0%, 10pp below) or lam=0.1 (36.7%, 33.3pp below) -- both exceed the 5pp tie-break window, so
+the rule's primary criterion decides outright; the bytes/time tie-break (bytes tied at 678.8B
+average regardless, so it would fall through to time) is never reached. **`lam_fallback = 0.001`
+is confirmed** -- same value as M0.1's naive pick, but now for a substantive reason (0.001 is
+measurably best, not merely "smallest, trivially tied with itself").
+
+**Real cost this ADR did not originally weigh:** median certification time per track, averaged
+across the 4 cells, is 2350.7 ms at lam=0.001 vs. 208.5 ms at lam=0.1 -- an ~11.3x spread (worst
+cell, `sigma=5/tol=10`: 4679.8 ms median, 8730.2 ms p90). The rule as written never consults this
+number here, because the fraction gap alone already decides it. This is flagged as a
+**consequence to weigh explicitly once M1/M2's actual DP cost function is implemented**, not
+silently accepted: `cost(i, j)` (spec section 2.2) is evaluated `O(m*W)` times per track (spec
+section 2.3), and a multi-second-per-candidate certification cost at `lam=0.001` may force a
+revisit of this choice once real runtimes are measured -- this ADR's decision stands for now, but
+is explicitly not final on cost grounds.
+
+**`tol=0.5 m` spline availability, revised from what the naive check suggested:** calling
+`spline.fit()` directly at the 0.5 m target certifies at most 53.3% of tracks (at lam=0.001,
+worse at larger lam) -- suggestive of unavailability. But targeting a substantially tighter
+*internal* tol first (0.25 m or 0.1 m) and certifying with lam=0.001 reaches **100%** certified
+pass at every internal-tol/sigma combination tested, at a real but bounded parameter cost
+(~1.5x-3x more control points than the naive target-tol attempt). **Spline segments ARE
+certificate-available at `tol=0.5 m`** -- the earlier open question is resolved in the opposite
+direction from the hypothesis it was testing. This also validates spec section 2.4's actual
+planned M1 construction (start dense, remove knots down to the certified limit) over the cruder
+direct-fit-at-target approach used for comparison here.
+
 ## Consequences
 
 - `src/traj/knot_removal.py` (M1) starts its greedy removal from a dense/interpolating LSQ
@@ -93,11 +145,15 @@ artifact either. Full breakdown: `benchmarks/results/step8.md`'s M0.1 Conclusion
   means a spline segment "passing" the certificate is not by itself evidence it's cheap; M2's DP
   cost function already compares bytes directly, so this is a reporting/interpretation note, not
   a code change.
-- Very tight `tol` (~0.5 m relative to this synthetic data's scale) remains hard for both
-  fitters (neither clears a 10% certified pass rate at `sigma<=0.1`) -- M1/M2 should not expect
-  either fitter choice to rescue spline segments at that regime; DP+SED remains the fallback
-  there (consistent with M0's own DP+SED certified-correctness numbers, which stay much higher
-  across the same grid).
+- **Revised by M0.2** (this consequence, as originally written after M0.1, is superseded, not
+  just extended): very tight `tol` (~0.5 m) is hard for `spline.fit()` called *directly at the
+  target* (at most 53.3% certified even at the now-chosen lam=0.001), but not because splines are
+  unavailable there -- calling `spline.fit()` at a tighter *internal* tol (0.25 m or 0.1 m) and
+  certifying with lam=0.001 reaches 100% certified pass. M1/M2's knot-removal construction
+  (spec 2.4: start dense, remove down to the certified limit) should therefore reach `tol=0.5 m`
+  spline segments fine in practice; a direct-fit-at-target attempt should not be read as evidence
+  otherwise. DP+SED vs. spline at `tol=0.5 m` remains a genuine `cost(i,j)` trade-off for M2 to
+  decide, not a construction-availability default toward the polyline.
 - The spec's literal wording for M1 (`docs/specs/step8_A_hybrid.md` section 2.4: "начать с
   интерполирующего или плотного LSQ-сплайна") doesn't name a specific fitter for that starting
   point; this ADR resolves the ambiguity in favor of `spline.fit()`'s dense-error-controlled
@@ -105,9 +161,10 @@ artifact either. Full breakdown: `benchmarks/results/step8.md`'s M0.1 Conclusion
 
 ## Links
 
-`benchmarks/step8_m01_lam_check.py`; `benchmarks/results/step8.md` (M0 Conclusions, M0.1);
-ADR-0013 (the same pre-registered-rule discipline, for `spline.fit()` vs. `spline_lsq` in step7);
-ADR-0018 (section 2.4 as the default spline certificate, whose formula's `lam` term this ADR
-tunes); ADR-0021 (the certificate-is-additional-not-gating split this investigation depends on);
+`benchmarks/step8_m01_lam_check.py`, `benchmarks/step8_m02_lam_refine.py`;
+`benchmarks/results/step8.md` (M0 Conclusions, M0.1, M0.2); ADR-0013 (the same pre-registered-rule
+discipline, for `spline.fit()` vs. `spline_lsq` in step7); ADR-0018 (section 2.4 as the default
+spline certificate, whose formula's `lam` term this ADR tunes); ADR-0021 (the
+certificate-is-additional-not-gating split this investigation depends on);
 `docs/specs/step8_A_hybrid.md` section 2.4 (knot removal for spline segments, the M1 consumer of
 this decision).

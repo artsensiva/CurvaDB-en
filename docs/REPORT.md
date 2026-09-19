@@ -1,7 +1,8 @@
 # CurvaDB: full technical report
 
 This is a standalone report: it can be read without opening any other file in this repository,
-though every claim in it links back to the specific file it came from. It compiles the project's
+though every claim in it names the specific file (in `` `backticks` ``, a relative path from the
+repository root) it came from, so it can be checked directly. It compiles the project's
 entire research record -- the original (rejected) idea, the GPS-trajectory compression study
 (`step0`-`step3`), the certified curve store (`step7`), and the hybrid-representation closure of
 hypothesis H1 (`step8`) -- from the documents already committed to this repository. No new
@@ -558,3 +559,227 @@ terminal conclusion; both halves of the hybrid (the plain spline, and now the fr
 itself) had already independently lost, leaving no baseline a DP-selected combination of the two
 could plausibly beat; A5/A6 would have validated the DP implementation, not gathered further
 evidence on H1 (`docs/reviews/step8_M1.md`).
+
+## 11. Cross-cutting findings
+
+Five distinct measurement bugs were found across step7/step8, each one a variant of the same
+underlying failure mode: **a function silently returned a plausible-but-wrong number instead of
+raising, when called outside the implicit precondition its correctness actually depended on.**
+None were found by inspection -- all five were found by cross-checking a result against an
+independent computation (a different algorithm, a different data source, or simply "does this
+number make sense against a related one already measured") and refusing to write a report until
+the discrepancy was explained.
+
+| Bug | Where | What happened | How found | Fix / guard |
+|---|---|---|---|---|
+| Discriminant clamp | step7 M0, `frechet_cont.py`'s free-space check | A slightly negative discriminant near the `Delta~=0` boundary was clamped to zero "to be safe" -- this actually made the check *more permissive*, letting the reported distance come out too small, exactly backwards for an upper bound. At coordinates in the hundreds of km, the resulting error grew to fractions of a millimeter, above the required precision. | Review of the M0 milestone (`docs/reviews/step7_M0.md`) | Replaced the clamp with a strict discriminant check (no clamp) -- ADR-0003, superseded by ADR-0004. |
+| Global-scale margin | step7 M0.1, `decide_conservative`/`distance_upper` | A single margin sized for the *whole* coordinate range (hundreds of km) was applied uniformly, even to free-space cells covering only a few meters -- wildly over-conservative locally while still not proven sufficient globally. | Same M0 review round | Recentered coordinates and used a local, per-cell margin instead of one global constant -- ADR-0005, superseded by ADR-0006. |
+| Parametrization-domain mismatch | step7 M1.2/M1.3, S2's fit-validity check (`dense_max_error`) | The dense-grid deviation check evaluated a `spline_lsq` fit (parametrized in real time, `t`) as if it were normalized to `u in [0,1]` (the convention `spline.fit()` uses) -- silently sampling the spline at the wrong point in its own domain. Reported invalid-fit rates of 93.8%/17.9% at two thresholds were measurement artifacts; the corrected rate on the same 60-track sample was ~18.3%. | A reviewer question ("wrong fitter for S2," `docs/reviews/step7_M1_2.md`) whose own premise turned out to rest on the broken number, caught while investigating it | Added an explicit `"raw"` parametrization mode plus a domain-consistency guard (`_check_tck_domain`) that raises `ValueError` on any tck/mode mismatch -- ADR-0014. |
+| Fake time array | step7 M4, `step7_m4.py`'s `_polyline_repr` | A synthetic `Track` was built with `t=np.zeros(len(xy))` (a constant, fake time array) before calling the time-aware `simplify_sed_with_indices`. With constant `t`, SED's synchronized-position interpolation collapses to the segment's own start point everywhere, causing systematic vertex over-retention nearly independent of `tol` -- the tol/size trade-off curve looked almost flat (16% spread across a 20x tol change) when the true spread, once fixed, was 5.1x. | The 16% spread contradicted step1's own, independently-measured ~4.8x compression spread on comparable data -- investigated before writing anything further, per project policy | Added `_validate_time`, raising `ValueError` for a zero-or-negative time span or a non-monotonic sequence, called at the top of `simplify_sed_with_indices` -- ADR-0020. |
+| Coarse sample for a lower bound | step7 M2, `hausdorff_lower_bound`'s dense spline sample | A *fixed-count* uniform sample of the spline was used to compute an informational lower bound (`LB`); 12 tracks came back with `eps_A < LB`, which is impossible for a genuine lower bound against a genuine certificate. The sample was simply too coarse to resolve a locally curvy stretch of specific splines (a 708-point uniform sample gave `LB` off by 3.0m on the worst track; 2000 points cut that to 0.5m). | A correctness-signal check built into M2's own validation (any `eps_A < LB` is flagged automatically, not discovered by chance) | Switched to the near-exact linearization's own *adaptively*-placed vertices as the dense sample (already computed for a different purpose, free to reuse) instead of guessing a uniform count -- ADR-0017. |
+| Wrong fitter compared for S2 | step7 M1.2 | ADR-0011 compared two variants of one fitter (`spline_lsq`'s `fit_adaptive` vs. `fit_uniform`) while a *different*, already-built, dense-error-controlled fitter (`spline.py`'s `fit()`, proven at 585/585 in step1) was available and not considered "out of scope" was the wrong call, since the tool already existed. | External review (`docs/reviews/step7_M1_2.md`, finding 1) | A pre-registered rule (higher valid-fit fraction decides outright; tie-break by two named indicators otherwise) compared both fitters on the full corpus once the parametrization bug above was also fixed -- `spline.fit()` won outright (100% vs. 90.1%, a 9.9-point gap) -- ADR-0013. |
+
+**The common thread, restated as a general engineering lesson:** a function given input outside
+its implicit precondition should raise, not return a number that merely looks plausible. Every
+fix above pairs a guard that raises loudly with a regression test specifically constructed to
+fail on the pre-fix code -- not just "does it work now," but "does it demonstrably no longer
+hide this specific class of mistake."
+
+**A sixth finding, from step8, generalizes beyond any single bug fix:** a certificate on the
+continuous Fréchet distance is a guarantee on shape, not on time synchrony (section 10). It is
+not a *bug* in the sense of the five above -- `certify_spline` does exactly what it's specified
+to do -- but it is a property easy to assume away by mistake: **if an application needs
+synchrony (matching position at the same timestamp, not just the same place at some time), a
+Fréchet certificate is the wrong tool; use SED or L2 error instead.**
+
+Two smaller process findings recur across both certified-store phases: (1) pre-registering a
+*decision rule*, not just success criteria, before a comparison run (ADR-0013 for the step7
+fitter choice; ADR-0022/ADR-0023 for step8's fitter/lam/internal-tol choices) prevents relitigating
+the rule after seeing which answer it produces; (2) a naive cost estimate based on the wrong unit
+of work (a full track's certification cost, used as a stand-in for a short segment's) was off by
+77x-97x in step8's own M2 budget projection (ADR-0023) -- order-of-magnitude budget checks need
+to measure at the *actual* scale the real workload will use, not a convenient proxy.
+
+## 12. Limitations and open questions
+
+- **Hypothesis H2 is untested.** Whether a spline's analytical derivatives (velocity,
+  acceleration, curvature) are valuable for search by shape/kinematics on high-precision data
+  (RTK, robotics, drones, surgical robotics), independent of whether the spline wins on
+  compression, was never tested -- demand is unconfirmed, pending interviews that were never
+  conducted (`docs/findings.md`, `docs/next_steps.md`).
+- **The industry interviews recommended before any code was written (Stage C, section 2) were
+  never conducted, for the entire project.** This is not a minor gap: the project's own
+  resolution, both after step3 and again after step8, is "the next step is interviews, not
+  code" (`docs/next_steps.md`). The return-to-code threshold is explicit: at least 3 of 10
+  interviewees independently naming a trajectory search/comparison problem current tools don't
+  solve.
+- **step3's `dt=15s` cells are uninformative, not a signal for any method.** At that sampling
+  interval, every method (DP+SED and both spline variants) is unreachable in 100% of grid cells
+  -- consistent with sharp turns fitting entirely within one interval between samples, a limit
+  of the information present in the data, not evidence against any representation
+  (`benchmarks/results/step3.md`, `docs/findings.md`'s "Limitations").
+- **step3's 15-track sample is small** for cell-level reachability fractions (the 80%/20%
+  thresholds are coarse at `n=15`) -- this affects K2/K3 specifically, not the oracle's direct
+  byte comparison (K1's headline number), which doesn't depend on a reachability fraction.
+- **step7's S3-fallback and S6b failures are accepted, documented architecture limitations of
+  the spec as written, not reopened for revision** (`docs/ROADMAP.md` section 8, gate G1's
+  decision text): both were independently reconfirmed as *correct* wherever they apply (M2's
+  three S1 checks for section 2.3; M3/M4's own correctness checks for query latency), so the
+  failures are properties of the spec's original design choices, not implementation defects
+  waiting to be fixed.
+- **step7's own open questions** (`docs/phases/step7_summary.md`, "What we don't know"):
+  whether the S5/`r=50` gap is worth closing in a real product by defaulting to a tighter `tol`
+  (M4 gives one data point, not a full sweep against real query-radius distributions); how S6b's
+  overhead behaves under a real (not synthetic, GeoLife-based) query load; whether section 2.3's
+  structural fallback-rate problem is fixable with a different piece-decomposition strategy (not
+  attempted, out of scope once ADR-0018 made 2.4 primary).
+- **step8's own open question** (`docs/phases/step8_summary.md`, "What we don't know"): whether
+  a different free-knot placement strategy (not this project's one-shot-ranked,
+  bisection-refined greedy removal, `src/traj/knot_removal.py`) could close more of A3's gap --
+  not tested, and per the H1 decision rule, not worth testing further once A3 has failed on this
+  milestone's own implementation.
+- **Scope, throughout:** all quantitative conclusions rest on GeoLife 1.3 (consumer,
+  smartphone-grade GPS) and synthetic road-like geometry generated for step2/step3/step8; no
+  other real trajectory dataset (robotics, drones, RTK/lidar-grade sources) was tested, which is
+  precisely why H1's closure and H2's open status are both scoped to "as tested," not asserted
+  as universal.
+
+## 13. Reproduction
+
+**Environment** (`CLAUDE.md`, both READMEs): Python 3.14, virtual environment at `venv/` (repo
+root), dependencies in `requirements-research.txt` (the unrelated `requirements.txt` is for the
+frozen `src/level1` code, not this research). Run everything via `venv/bin/python`/
+`venv/bin/pytest`, never a bare `python`/`pytest`, so the correct environment is used.
+
+**Data:** GeoLife Trajectories 1.3, expected at `data/geolife/<user_id>/Trajectory/*.plt`
+(git-ignored, not included in the repository -- must be obtained separately from Microsoft
+Research's public release).
+
+**Seeds:** `seed=42` throughout step0-step3 and step7/step8's synthetic generators (the same
+seed reproduces the same synthetic tracks across steps, e.g. step8 M0 reusing step3's exact
+15-track generator). GeoLife-based benchmarks (step1, step7) use the full available corpus after
+cleaning (585 tracks), not a further random subsample, except where a script explicitly names a
+smaller subsample (e.g. step1's 60-track compression subsample, step7 M2's 30-track mpmath
+sample).
+
+**Commands, tests then one script per step/milestone** (each script writes its own section into
+`benchmarks/results/<step>.md`; `--pilot` flags run a small, time-bounded sample first, per this
+project's standing "pilot before a long full run" discipline, `docs/history.md`'s "Process
+lessons"):
+
+```bash
+venv/bin/pytest tests/traj/                            # all property/regression tests
+
+# step0-step3: does a cubic B-spline compress GPS trajectories better than DP+SED?
+venv/bin/python benchmarks/step0.py                    # first (broken) measurement
+venv/bin/python benchmarks/step1_clean.py              # data cleaning
+venv/bin/python benchmarks/step1_spline_fit.py         # honest dense fitting
+venv/bin/python benchmarks/step1_compression.py        # compression (hypothesis A)
+venv/bin/python benchmarks/step1_kinematics.py         # kinematics (hypothesis B)
+venv/bin/python benchmarks/step1_search.py             # recall@10
+venv/bin/python benchmarks/step2_crossover.py --pilot  # niche search (pilot)
+venv/bin/python benchmarks/step2_crossover.py          # niche search (full run)
+venv/bin/python benchmarks/step3_decisive.py --pilot   # decisive experiment (pilot)
+venv/bin/python benchmarks/step3_decisive.py           # decisive experiment (full run)
+
+# step7: the certified curve store (docs/specs/step7_B_certified_store.md)
+venv/bin/python benchmarks/step7_certify.py            # M0-M1: polyline + spline (2.4) certificates
+venv/bin/python benchmarks/step7_m13_fitters.py        # M1.3: fitter comparison
+venv/bin/python benchmarks/step7_m13_tail.py           # M1.3: eps_A/LB tail verification
+venv/bin/python benchmarks/step7_m2_projection.py      # M2: primary spline certificate (2.3), full corpus
+venv/bin/python benchmarks/step7_query.py              # M3: interval range queries, full corpus + near-duplicates
+venv/bin/python benchmarks/step7_m4.py                 # M4: error rates, tol/size trade-off, latency
+
+# step8: hybrid representation, closing H1 (docs/specs/step8_A_hybrid.md)
+venv/bin/python benchmarks/step8_hybrid.py --pilot     # M0: encoding re-verification (pilot)
+venv/bin/python benchmarks/step8_hybrid.py             # M0: encoding re-verification (full run)
+venv/bin/python benchmarks/step8_m01_lam_check.py      # M0.1: lam_fallback vs. fitter oscillation
+venv/bin/python benchmarks/step8_m02_lam_refine.py     # M0.2: lam refined on the chosen fitter
+venv/bin/python benchmarks/step8_m1_budget.py          # M1 item 0: segment-scale certify_spline budget
+venv/bin/python benchmarks/step8_m1_internal_tol.py    # M1 item 0: internal-tol fraction at lam=0.1
+venv/bin/python benchmarks/step8_m1_a3.py              # M1: knot removal, free-knot oracle, criterion A3
+```
+
+**Timings actually recorded** (where a source states one; hardware was not recorded in any
+source, so it is not stated here as if it were): step2's full run (30 tracks, 30 cells) took
+1215s (20.3 min), against a 3-minute-budget, 22-second pilot on 5 tracks (`benchmarks/results/
+step2.md`); step7 M1.3's two fitter runs took 2602.4s (`fit_adaptive`) and 3367.2s (`spline.
+fit()`) on the full 585-track corpus (`benchmarks/results/step7.md`); step8's M0 full run (15
+tracks) took 36.5s (`benchmarks/results/step8.md`). No benchmark in this project recorded CPU
+model, core count, or memory -- reproduction on different hardware should expect different
+absolute times, not necessarily the same relative ratios reported here.
+
+## 14. Index: ADRs and glossary
+
+**23 architecture decision records** (`docs/decisions/README.md`'s own index, reused verbatim;
+"Superseded" entries are kept in the repository with their original reasoning, never deleted):
+
+| # | Title | Status |
+|---|---|---|
+| 0001 | Continuous Fréchet metric instead of discrete | Accepted |
+| 0002 | No `fastmath` in `frechet_cont.py`'s numba kernels | Accepted |
+| 0003 | Discriminant clamp at the `Delta~=0` boundary | Superseded by ADR-0004 |
+| 0004 | Strict discriminant check (no clamp) | Accepted |
+| 0005 | Global-coordinate-scale margin in `decide_conservative` | Superseded by ADR-0006 |
+| 0006 | Recentering + local per-cell margin in `decide_conservative`/`distance_upper` | Accepted |
+| 0007 | Rolling-row (`O(n+m)`) DP kernels above `n*m > 5,000,000` | Accepted |
+| 0008 | Root-splitting per recursion level + small-ball rule + boundary guard for `certified_linearize` | Accepted |
+| 0009 | `mpmath.iv` instead of `python-flint` | Accepted |
+| 0010 | "Invalid fit" category for S2, with a fixed validity threshold | Accepted |
+| 0011 | Spline fitter choice for S2 (`fit_adaptive` vs. `fit_uniform`) | Accepted |
+| 0012 | S2 invalid-fit rate is a fitter property, not a threshold-calibration artifact | Superseded by ADR-0014 |
+| 0013 | Spec deviation: compare `spline.fit()` against `spline_lsq` for S2 | Accepted |
+| 0014 | `dense_max_error`'s parametrization-domain bug (ADR-0010/ADR-0012's numbers invalid) | Accepted |
+| 0015 | Correspondence-point search for section 2.3 (coarse scan + safeguarded Newton) | Accepted |
+| 0016 | Section 2.3 certificate structure (fixed direction, measured tube, early exit) | Accepted |
+| 0017 | `hausdorff_lower_bound`'s dense spline sample must be adaptive, not fixed-count-uniform | Accepted |
+| 0018 | Section 2.4 becomes the primary spline certificate; section 2.3 excluded from the pipeline | Accepted |
+| 0019 | Interval queries (section 2.5): `eps_A` already equals `epsilon+lambda`, decide-only rule | Accepted |
+| 0020 | A degenerate time array silently breaks SED simplification (M4's trade-off curve) | Accepted |
+| 0021 | Step8's reachability gate stays step3's honest-curve error; certificates are additional | Accepted |
+| 0022 | Spline segment fitter and `lam_fallback` for M1/M2 (pre-registered rule) | Accepted |
+| 0023 | `knot_removal.py`'s certification `lam_fallback` and internal-tol strategy (segment-scale budget) | Accepted |
+
+**Glossary:**
+
+- **Fréchet distance (continuous).** The infimum, over all monotone, continuous
+  reparametrizations of two curves, of the maximum distance between corresponding points at any
+  moment -- unlike Hausdorff distance, it respects the *order* points are traversed in, but (as
+  section 10/11 found) not the *timing*. Computed here via the Alt-Godau free-space-diagram
+  algorithm (`src/traj/frechet_cont.py`).
+- **Discrete Fréchet distance.** The same idea restricted to a fixed, finite point sequence on
+  each curve (no continuous reparametrization) -- what step0-step3's recall@10 measurements use
+  (`src/traj/frechet.py`, Eiter-Mannila algorithm).
+- **DP (Douglas-Peucker).** A classic polyline-simplification algorithm: recursively drop the
+  point with the largest perpendicular distance from the current simplified segment, stopping
+  when that distance is `<=tol` everywhere.
+- **SED (synchronized Euclidean distance).** A time-aware variant of DP: the deviation of a
+  removed point is measured against the position the simplified segment would be at, *at that
+  point's own timestamp* (linear interpolation in time between the segment's endpoints), not
+  perpendicular distance -- stricter than spatial DP at the same `tol` when points are unevenly
+  spaced in time (`src/traj/simplify.py`).
+- **Oracle.** A method's fit computed on the *true*, unobserved data (not the noisy/sparse
+  samples actually available) -- a ceiling that separates a representation's own limits from a
+  specific fitter's limits. Must itself be checked for whether it's tuned to the method's full
+  potential (step3's oracle used only uniform knots -- a real limitation, closed by step8's
+  free-knot oracle).
+- **Certificate / `eps_A`.** A *proven*, not merely observed, upper bound on the Fréchet distance
+  between an original curve `A` and its compressed representation `A'` (`src/traj/certify.py`).
+  Checking a dense grid of samples is not a proof (the curve can do anything between sample
+  points) -- a certificate is derived analytically (exact for polylines via Alt-Godau; via the
+  convex-hull property of Bézier control points for splines).
+- **`lam`/`lam_fallback`.** The tolerance parameter controlling how finely a spline is
+  linearized before certifying the linearization's own error (section 2.4's certified
+  linearization); a smaller `lam` gives a tighter, slower-to-compute certificate.
+- **`tol`.** The target error tolerance a representation must satisfy -- always an input to a
+  method, never a value discovered by it; every step in this report sweeps or fixes a method's
+  own *internal* parameter to find the cheapest representation meeting a given external `tol`.
+- **Reachable / valid cell.** "Reachable" (a single method, at a given parameter grid cell):
+  that method found *some* representation satisfying the error criterion. "Valid" (a comparison
+  between two methods, spec section 8's own definition, used verbatim in step8's A3 check): a
+  grid cell where *both* compared methods are reachable on `>=80%` of tracks -- a comparison in
+  an invalid cell is not reported as a pass or fail, only as inapplicable.
+- **H1 / H2.** H1 (compression): can free/optimal spline knot placement compress exact,
+  noise-free trajectory data better than DP+SED? Closed, negative, by step8 (section 10). H2
+  (product): are a spline's analytical derivatives valuable for kinematic search on
+  high-precision data, independent of compression? Open, untested (section 12).

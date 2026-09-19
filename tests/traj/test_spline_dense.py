@@ -3,9 +3,11 @@ neighboring points, not just at the points themselves (see
 src/traj/spline.py, benchmarks/results/step0_diagnostics.md)."""
 
 import numpy as np
+import pytest
 
 from traj.io import Track
-from traj.spline import dense_check, fit
+from traj.spline import dense_check, dense_max_error, fit
+from traj.spline_lsq import fit_adaptive
 
 TOL = 10.0
 
@@ -90,3 +92,19 @@ def test_sp_max_error_matches_dense_check():
     sp = fit(track, tol=TOL)
     max_err, _ = dense_check(track, sp)
     assert abs(sp.max_error - max_err) < 1e-6
+
+
+def test_dense_max_error_rejects_mismatched_domain():
+    """ADR-0014: spline_lsq.py's LsqSplineFit.tck has knots in REAL time
+    (make_lsq_spline fits directly on t, unlike splprep's normalized-u
+    convention). Calling dense_max_error with mode="time" on such a tck --
+    exactly the mistake benchmarks/step7_certify.py's fit_validity() made
+    -- evaluates the spline in the wrong sliver of its domain instead of
+    across the real track; it must raise, not silently return a wrong
+    number."""
+    track = _sharp_turn_track(seed=2)
+    lsq_fit = fit_adaptive(track, tol=TOL)
+    with pytest.raises(ValueError, match="doesn't match mode"):
+        dense_max_error(track.t, track.xy, lsq_fit.tck, mode="time")
+    # mode="raw" is the correct call for this tck -- must NOT raise.
+    dense_max_error(track.t, track.xy, lsq_fit.tck, mode="raw")

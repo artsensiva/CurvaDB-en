@@ -52,11 +52,45 @@ def _param_u(t: np.ndarray, xy: np.ndarray, mode: str) -> np.ndarray:
         cum = np.concatenate([[0.0], np.cumsum(seg)])
         total = cum[-1]
         return cum / total if total > 0 else np.linspace(0.0, 1.0, len(xy))
+    if mode == "raw":
+        # tck's own domain IS real t (e.g. spline_lsq.py's make_lsq_spline(t, xy, ...)
+        # fits directly on real t, unlike splprep's normalized-u convention below) --
+        # no renormalization.
+        return np.asarray(t, dtype=float)
     if mode != "time":
         raise ValueError(f"unknown parametrization: {mode!r}")
     t_min, t_max = float(t.min()), float(t.max())
     span = t_max - t_min
     return (t - t_min) / span if span > 0 else np.linspace(0.0, 1.0, len(t))
+
+
+def _check_tck_domain(tck: tuple, t: np.ndarray, mode: str) -> None:
+    """Guards against evaluating a tck at the wrong parametrization: mode
+    "time"/"chord" both normalize into u in [0, 1] (see _param_u); mode
+    "raw" expects a tck whose own knots are real t values (spline_lsq.py's
+    convention). Mismatching them silently evaluates the spline near the
+    wrong sliver of its domain instead of raising -- exactly the bug this
+    check exists to catch (see ADR-0014)."""
+    knots = np.asarray(tck[0], dtype=float)
+    k_min, k_max = float(knots.min()), float(knots.max())
+    if mode in ("time", "chord"):
+        if abs(k_min) > 1e-9 or abs(k_max - 1.0) > 1e-9:
+            raise ValueError(
+                f"tck domain [{k_min}, {k_max}] doesn't match mode={mode!r} (expected "
+                "normalized u in [0, 1]) -- pass mode='raw' for a tck parametrized "
+                "directly in real coordinates (e.g. spline_lsq.py's fits)"
+            )
+    elif mode == "raw":
+        t_min, t_max = float(t.min()), float(t.max())
+        span = max(t_max - t_min, 1e-12)
+        if abs(k_min - t_min) > 1e-6 * span or abs(k_max - t_max) > 1e-6 * span:
+            raise ValueError(
+                f"tck domain [{k_min}, {k_max}] doesn't match mode='raw' (expected real "
+                f"t domain [{t_min}, {t_max}]) -- pass mode='time'/'chord' for a tck "
+                "parametrized via _param_u's normalization (e.g. spline.py's fits)"
+            )
+    else:
+        raise ValueError(f"unknown parametrization: {mode!r}")
 
 
 def _point_seg_dist(px: np.ndarray, py: np.ndarray, ax: float, ay: float, bx: float, by: float) -> np.ndarray:
@@ -77,6 +111,7 @@ def _dense_scan(
     the spline over their parameter interval u and the max point-to-segment
     distance to the straight segment between them. Returns
     (per_interval_max, fraction_of_u_of_worst_point)."""
+    _check_tck_domain(tck, t0, mode)
     u0 = _param_u(t0, xy0, mode)
     n = len(t0)
     per_interval_max = np.empty(max(n - 1, 0))
@@ -107,9 +142,15 @@ def dense_max_error(
     t: np.ndarray, xy: np.ndarray, tck: tuple, mode: str = "time", pts_per_interval: int = PTS_PER_INTERVAL
 ) -> float:
     """Max point-to-segment error on a dense grid for an arbitrary tck
-    (e.g. from make_lsq_spline) relative to points (t, xy) -- the same
-    metric that fit()/dense_check() use, but without the internal fitting
-    logic (densify/growing s)."""
+    relative to points (t, xy) -- the same metric that fit()/dense_check()
+    use, but without the internal fitting logic (densify/growing s).
+
+    mode must match the tck's OWN parametrization convention: "time"/
+    "chord" for a tck normalized into u in [0, 1] (spline.py's own fit(),
+    via _param_u); "raw" for a tck whose knots are real t values directly
+    (e.g. scipy.interpolate.make_lsq_spline(t, xy, ...), spline_lsq.py's
+    convention). Passing the wrong mode raises ValueError (ADR-0014) rather
+    than silently evaluating the spline in the wrong part of its domain."""
     per_interval_max, _ = _dense_scan(np.asarray(t, dtype=float), np.asarray(xy, dtype=float), tck, mode, pts_per_interval)
     return float(per_interval_max.max()) if len(per_interval_max) else 0.0
 

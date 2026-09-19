@@ -3,3 +3,5 @@ scipy
 shapely
 pytest
 numba
+hypothesis
+mpmath

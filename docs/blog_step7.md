@@ -58,8 +58,8 @@ being a trade-off against correctness.
 1.00 for polylines and 1.02 for splines — the proven bound nearly matches the true distance,
 not a multiple of it.
 
-**Speed depends on what you compare against** (median time per query, polyline representation,
-`r = 200` m):
+**Speed depends on what you compare against** (polyline representation, `r = 200` m, median time
+per query):
 
 | Method | Median | Answers |
 |---|---|---|
@@ -95,8 +95,10 @@ millimeter, above the required precision.
 
 **A mixed-up parameter domain.** A dense-error check evaluated a spline somewhere it wasn't even
 defined: one part of the code normalized time to `[0, 1]`, another worked in real seconds. Result:
-93.8% of fits declared bad. After the fix: about 18%. A conclusion built on the first number would
-have been entirely false.
+93.8% of fits declared bad. After the fix: about 18% (the invalid-fit rate on a 60-track
+verification sample, not to be confused with the unrelated 18.2% figure for candidates resolved
+without reading source data at `tol = 20` m in the tuning-knob section above). A conclusion built
+on the first number would have been entirely false.
 
 **Fake time.** A simplification function that is time-aware by design was handed an array of
 zeros instead of real timestamps. It didn't crash — it silently returned a plausible-looking but

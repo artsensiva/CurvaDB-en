@@ -10,12 +10,15 @@ conclusion) and [research findings](findings.md).
   (step1, step3): the DP-simplified polyline is more compact at every
   tolerance tested, and the gap isn't explained by noise, observation
   sparsity, or the quality of the specific fitter.
-- **Compression on exact (noise-free) data** -- no advantage under the
-  conditions tested (step3's oracle with uniform knots is not more
-  compact than DP+SED), but this isn't final: hypothesis H1 (optimal/
-  free knot placement) is **open, but not a priority** -- even a
-  hypothetical ~30% byte savings would not be product value by itself
-  (a GPS track already takes up a few kilobytes).
+- **Compression on exact (noise-free) data -- closed** (step3, step8):
+  no advantage under the conditions tested. Step3's oracle with uniform
+  knots wasn't more compact than DP+SED, and hypothesis H1 (optimal/
+  free knot placement) closed the gap step3 left open -- step8's
+  free-knot oracle (certified knot removal directly on the true curve)
+  still doesn't beat DP+SED by the required 20% at any tested tolerance
+  (closest: 0.834x at tol=2 m, vs. an 0.80x bar). Even the hypothetical
+  ~30% byte savings this was chasing would not have been product value
+  by itself (a GPS track already takes up a few kilobytes).
 - **The next step is interviews, not code.** The recommendation for
   10-15 interviews was given back in Stage C (`docs/history.md`), before
   any code was written, and was never carried out over the whole

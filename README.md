@@ -2,12 +2,13 @@
 
 Русская версия: [README.ru.md](README.ru.md)
 
-The project now has two parts. The first (`step0`-`step3`) is a completed research study: does
-storing GPS trajectories as cubic B-splines beat the classic "Douglas-Peucker (DP) simplification
-+ search by discrete Fréchet distance" scheme? Bottom line: a negative result on compression
-for consumer GPS; for high-precision data, no advantage was found under the
-conditions tested either, but the question isn't fully closed (see
-hypothesis H1 in [docs/findings.md](docs/findings.md)). That study concludes
+The project now has two parts. The first (`step0`-`step3`, `step8`) is a completed research
+study: does storing GPS trajectories as cubic B-splines beat the classic "Douglas-Peucker (DP)
+simplification + search by discrete Fréchet distance" scheme? Bottom line: a negative result on
+compression for consumer GPS, and — after step8 closed the question step3 left open — for
+high-precision data too: even a free-knot spline oracle fit directly to the exact curve isn't
+20% more compact than DP+SED at any tested tolerance (see hypothesis H1, now closed, in
+[docs/findings.md](docs/findings.md)). That study concludes
 as research — the next step for it is not code, but industry
 interviews (see [docs/next_steps.md](docs/next_steps.md)).
 
@@ -66,7 +67,7 @@ spec), [benchmarks/results/step7.md](benchmarks/results/step7.md) (all milestone
 - [docs/history.md](docs/history.md) — the full project history, from
   the original idea to the resolution.
 - [docs/findings.md](docs/findings.md) — research findings: the
-  question, key numbers, conclusion, limitations, open hypotheses H1/H2.
+  question, key numbers, conclusion, limitations, closed hypothesis H1, open hypothesis H2.
 - [docs/next_steps.md](docs/next_steps.md) — the resolution, the
   interview plan, the return-to-code threshold, a sketch of an H2
   experiment.

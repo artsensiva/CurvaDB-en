@@ -8,7 +8,7 @@ authors:
   - family-names: "Galukhin"
     given-names: "Artem"
 repository-code: "https://github.com/artsensiva/CurvaDB-en"
-doi: "10.5281/zenodo.22850470"
+doi: "10.5281/zenodo.22850469"
 license: MIT
 abstract: >-
   A cubic B-spline does not compress real GPS trajectories better than a

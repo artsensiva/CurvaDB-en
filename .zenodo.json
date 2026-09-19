@@ -1,0 +1,30 @@
+{
+  "title": "CurvaDB: a certified curve store and a negative result on splines for trajectory storage",
+  "upload_type": "software",
+  "creators": [
+    {"name": "Galukhin, Artem"}
+  ],
+  "license": "MIT",
+  "keywords": [
+    "trajectory data",
+    "Frechet distance",
+    "B-splines",
+    "trajectory compression",
+    "certified bounds",
+    "negative results",
+    "GeoLife",
+    "spatial databases",
+    "computational geometry",
+    "reproducible research"
+  ],
+  "description": "<p>Does storing GPS trajectories as cubic B-splines beat the classic Douglas-Peucker (DP) simplification, and can a curve store answer range queries over compressed trajectories with a provable guarantee on the true continuous Fr&eacute;chet distance? Five results, four negative and one positive, all reached by fixing criteria before each run and measuring error against ground truth, never against a method's own observations:</p><ol><li><strong>(Negative)</strong> A cubic B-spline is not a better compressor for real, consumer-grade GPS trajectories than a DP-simplified polyline: the DP polyline is smaller at every tested tolerance (3.7x smaller at tol=10&nbsp;m).</li><li><strong>(Negative)</strong> Removing every confound (the spline's tethering to the polyline, the fitter's own weaknesses, noise, sampling sparsity via an oracle fit to the true curve) still doesn't save the spline: a decisive synthetic test's three pre-registered criteria all fail, and the oracle itself isn't more compact than DP+SED (292 vs. 278 bytes at tol=10&nbsp;m).</li><li><strong>(Negative)</strong> The one gap that oracle left open &mdash; uniform knots only, not free/optimal placement &mdash; closes the same way: a certified, free-knot oracle fit directly on the true curve still doesn't beat DP+SED by the required 20% at any tested tolerance (closest: 0.834x at tol=2&nbsp;m, against an 0.80x bar). This closes the project's open hypothesis on optimal knot placement.</li><li><strong>(Positive)</strong> A certified curve store <em>can</em> answer continuous-Fr&eacute;chet range queries over compressed trajectories with a provable error bound, with zero misses and zero false positives across 6,000,000 tested combinations, and cheaper than an honest, uncompressed exact competitor (20.1&nbsp;ms vs. 41.7&nbsp;ms median per query).</li><li><strong>(Negative)</strong> That same store's spec-designated primary spline certificate mechanism doesn't work as designed (83.6% of splines fall back to the secondary path, against a required &le;10%), and the correctness guarantee has a real, measured price against an uncertified approximate search (2.7x&ndash;4.4x slower).</li></ol><p>Methodology throughout: criteria fixed before each run (never adjusted afterward to fit the data), an oracle fit to ground truth to separate a representation's own limits from a specific fitter's, error measured against ground truth rather than a method's own noisy observations, and a negative result treated as a normal, reportable outcome.</p><p>Full technical report: <a href=\"https://github.com/artsensiva/CurvaDB-en/blob/main/docs/REPORT.md\">docs/REPORT.md</a>. Raw results per step: <a href=\"https://github.com/artsensiva/CurvaDB-en/tree/main/benchmarks/results\">benchmarks/results/</a>. Full decision history (23 architecture decision records): <a href=\"https://github.com/artsensiva/CurvaDB-en/tree/main/docs/decisions\">docs/decisions/</a>.</p>",
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/artsensiva/CurvaDB",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ],
+  "version": "1.0",
+  "language": "eng"
+}

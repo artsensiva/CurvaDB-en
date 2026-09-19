@@ -1,6 +1,8 @@
 # CurvaDB: full technical report
 
-**How to cite:** [10.5281/zenodo.22850470](https://doi.org/10.5281/zenodo.22850470) -- see
+**How to cite:** [10.5281/zenodo.22850469](https://doi.org/10.5281/zenodo.22850469) (concept
+DOI, always resolves to the latest version; version 1.0 specifically:
+[10.5281/zenodo.22850470](https://doi.org/10.5281/zenodo.22850470)) -- see
 [CITATION.cff](../CITATION.cff) or the "Citation" section in [README.md](../README.md) for the
 ready-to-use citation string and BibTeX.
 

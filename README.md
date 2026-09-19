@@ -4,12 +4,12 @@
 
 ## Citation
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22850470.svg)](https://doi.org/10.5281/zenodo.22850470)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22850469.svg)](https://doi.org/10.5281/zenodo.22850469)
 
 If you use this work, please cite it as:
 
 > Galukhin, A. (2026). *CurvaDB: certified curve store and a negative result on splines for
-> trajectory storage* (Version 1.0) [Software]. https://doi.org/10.5281/zenodo.22850470
+> trajectory storage* (Version 1.0) [Software]. https://doi.org/10.5281/zenodo.22850469
 
 ```bibtex
 @software{galukhin_curvadb_2026,
@@ -17,10 +17,17 @@ If you use this work, please cite it as:
   title   = {CurvaDB: certified curve store and a negative result on splines for trajectory storage},
   year    = {2026},
   version = {1.0},
-  doi     = {10.5281/zenodo.22850470},
-  url     = {https://doi.org/10.5281/zenodo.22850470}
+  doi     = {10.5281/zenodo.22850469},
+  url     = {https://doi.org/10.5281/zenodo.22850469}
 }
 ```
+
+This DOI (10.5281/zenodo.22850469) is the *concept* DOI -- it always resolves to the latest
+version. To cite exactly version 1.0, use the version DOI instead:
+[10.5281/zenodo.22850470](https://doi.org/10.5281/zenodo.22850470).
+
+Zenodo metadata for each new release is sourced from [.zenodo.json](.zenodo.json), not GitHub's
+short description.
 
 Full citation metadata: [CITATION.cff](CITATION.cff).
 

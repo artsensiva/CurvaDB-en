@@ -4,12 +4,12 @@ English version: [README.md](README.md)
 
 ## Цитирование
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22850470.svg)](https://doi.org/10.5281/zenodo.22850470)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22850469.svg)](https://doi.org/10.5281/zenodo.22850469)
 
 Если вы используете эту работу, пожалуйста, цитируйте её так:
 
 > Galukhin, A. (2026). *CurvaDB: certified curve store and a negative result on splines for
-> trajectory storage* (Version 1.0) [Software]. https://doi.org/10.5281/zenodo.22850470
+> trajectory storage* (Version 1.0) [Software]. https://doi.org/10.5281/zenodo.22850469
 
 ```bibtex
 @software{galukhin_curvadb_2026,
@@ -17,10 +17,17 @@ English version: [README.md](README.md)
   title   = {CurvaDB: certified curve store and a negative result on splines for trajectory storage},
   year    = {2026},
   version = {1.0},
-  doi     = {10.5281/zenodo.22850470},
-  url     = {https://doi.org/10.5281/zenodo.22850470}
+  doi     = {10.5281/zenodo.22850469},
+  url     = {https://doi.org/10.5281/zenodo.22850469}
 }
 ```
+
+Это *концептуальный* (concept) DOI — он всегда ведёт на последнюю версию. Чтобы сослаться именно
+на версию 1.0, используйте DOI версии:
+[10.5281/zenodo.22850470](https://doi.org/10.5281/zenodo.22850470).
+
+Метаданные для Zenodo хранятся в [.zenodo.json](.zenodo.json) и применяются к каждому новому
+релизу, а не короткое описание из GitHub.
 
 Полные метаданные цитирования: [CITATION.cff](CITATION.cff).
 

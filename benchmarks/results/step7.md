@@ -806,12 +806,16 @@ availability and a 1.68x looser median `eps_A` than 2.4 (M2) -- resolved by ADR-
 2.3 kept as a verified but non-default alternative), not by weakening the density criterion.
 
 **Q2: what fraction of queries resolves via approximations without reading the source?** Highly
-`r`-dependent, not a single number: at `r=200`/`r=1000` (M3), 84-96% of post-cheap-filter
-candidates resolve without touching originals (S5 passes); at `r=50`, only 58-62% at the M1/M2
-`tol=10` operating point (S5 fails) -- but this milestone's trade-off curve (above) shows a
-tighter `tol=1` polyline representation recovers 92.9% at `r=50`, for a modest (+16.5%) size cost.
-The answer is genuinely "it depends on `r` and the chosen representation tolerance," not a fixed
-percentage -- exactly the kind of nuance a single headline number would have hidden.
+`r`-dependent, not a single number. **Spec section 8's own S5 wording only mandates `r=200`, for
+at least one representation** -- and that is satisfied cleanly (84.8% polyline, 83.7% spline, M3).
+Checking the *same* question at other `r`'s (M3's own choice, beyond the letter of S5, to get the
+fuller picture) finds `r=1000` even better (95-96%) but `r=50` short of the same 80% bar (58-62%
+at the M1/M2 `tol=10` operating point) -- this is a real, worth-reporting limitation, but it is an
+*extension* of S5's own literal scope, not a failure of the S5 criterion the spec actually
+states. This milestone's trade-off curve (above) shows a tighter `tol=1` polyline representation
+recovers 92.9% at `r=50`, for a modest (+16.5%) size cost -- so the fuller answer is genuinely "it
+depends on `r` and the chosen representation tolerance," which the spec's own single-`r`
+criterion does not by itself reveal.
 
 **Q3: what does dropping the guarantee cost?** Small but real and nonzero everywhere it was
 measured (table above): 0.03-3.03% miss rates, 0.00-2.04% false-positive rates, worst at short

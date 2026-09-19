@@ -355,3 +355,80 @@ question is resolved in the opposite direction from the hypothesis it was raised
 `tol=0.5 m`, a polyline-vs-spline choice in M2 is not forced by certificate unavailability; it
 remains a genuine cost/geometry trade-off, decided by `cost(i,j)`, not a construction-availability
 default.**
+
+### M1.0 -- budget check (ADR-0023)
+
+**Estimate, not a measurement of M2's real runtime** (M2 doesn't exist yet; section 2.1's candidate count `m` is a labeled proxy from M0's DP+SED kept-vertex counts, not a measured quantity). Purpose: decide `knot_removal.py`'s certification `lam_fallback` *before* writing it (ADR-0023).
+
+Assumptions: `m` (candidates/track) proxy = 68.2 (synthetic, from M0's DP+SED n at sigma=0/tol=2/dt=1) / 150 (GeoLife, longer tracks); `W`=8; M2 grid = 15 synthetic tracks x 4 sigma x 3 tol x 2 dt (360 cells) + 585 GeoLife tracks x 2 tol (1170 cells); DP transitions/track = m*W (546 synthetic, 1200 GeoLife); total transitions across the grid ~ 1,600,416.
+
+#### Measured `certify_spline` cost by segment length
+
+| segment vertices | n control points p50 | time p50 lam=0.001 (ms) | time p50 lam=0.1 (ms) |
+|---|---|---|---|
+| 10 | 4.0 | 2.81 | 0.31 |
+| 25 | 4.0 | 4.21 | 0.33 |
+| 50 | 4.0 | 24.23 | 2.70 |
+| 100 | 4.0 | 29.84 | 3.09 |
+
+#### Old (full-track-based) vs. new (segment-based) M2 projection
+
+Old estimate reuses ADR-0022's full-track measurements (`benchmarks/results/step8.md` M0.2): 2350.73 ms/call at lam=0.001, 208.48 ms/call at lam=0.1 -- treating each DP transition's spline-cost evaluation as if it cost as much as certifying an ENTIRE track, which this section's own measurement shows is far too pessimistic. New estimate uses the 50-vertex bracket above (24.23 ms lam=0.001, 2.70 ms lam=0.1), the closest tested size to a typical DP candidate segment's own length.
+
+| lam_fallback | old estimate (full-track basis) | new estimate (segment basis) | ratio |
+|---|---|---|---|
+| 0.001 | 1,045.0 h | 10.8 h | 97.0x |
+| 0.1 | 92.7 h | 1.2 h | 77.2x |
+
+**Applying ADR-0023's rule:** the segment-based lam=0.001 projection is 10.8 h (> the 2 h threshold). **Decision: lam_fallback=0.1 + tuned internal tol (ADR-0023 rule triggered).**
+
+### M1.0 -- internal-tol fraction at lam=0.1 (ADR-0023)
+
+Reference: M0.2's average `eps_A<=tol` fraction at lam_fallback=0.001, internal tol = target tol (ratio=1.0), across the same 4 cells: **70.0%** (reused from `benchmarks/results/step8.md`'s M0.2 section, not recomputed).
+
+#### sigma=0, tol=0.5 (lam_fallback=0.1)
+
+| internal-tol ratio | converged | eps_A<=tol fraction | n p50 |
+|---|---|---|---|
+| 1 | 15/15 | 0.0% | 274.0 |
+| 0.5 | 15/15 | 100.0% | 514.0 |
+| 0.25 | 15/15 | 100.0% | 745.0 |
+| 0.1 | 11/15 | 100.0% | 1402.0 |
+
+#### sigma=0.1, tol=0.5 (lam_fallback=0.1)
+
+| internal-tol ratio | converged | eps_A<=tol fraction | n p50 |
+|---|---|---|---|
+| 1 | 15/15 | 6.7% | 343.0 |
+| 0.5 | 14/15 | 100.0% | 736.0 |
+| 0.25 | 10/15 | 100.0% | 965.5 |
+| 0.1 | 15/15 | 100.0% | 1474.0 |
+
+#### sigma=1, tol=2 (lam_fallback=0.1)
+
+| internal-tol ratio | converged | eps_A<=tol fraction | n p50 |
+|---|---|---|---|
+| 1 | 15/15 | 73.3% | 412.0 |
+| 0.5 | 15/15 | 100.0% | 628.0 |
+| 0.25 | 15/15 | 100.0% | 736.0 |
+| 0.1 | 15/15 | 100.0% | 1447.0 |
+
+#### sigma=5, tol=10 (lam_fallback=0.1)
+
+| internal-tol ratio | converged | eps_A<=tol fraction | n p50 |
+|---|---|---|---|
+| 1 | 15/15 | 66.7% | 436.0 |
+| 0.5 | 15/15 | 100.0% | 679.0 |
+| 0.25 | 15/15 | 100.0% | 775.0 |
+| 0.1 | 15/15 | 100.0% | 1234.0 |
+
+#### Applying ADR-0023's internal-tol rule
+
+| ratio | avg eps_A<=tol fraction (4 cells) | avg n p50 | within 5pp of reference? |
+|---|---|---|---|
+| 1 | 36.7% | 366.2 | no |
+| 0.5 | 100.0% | 639.2 | yes |
+| 0.25 | 100.0% | 805.4 | yes |
+| 0.1 | 100.0% | 1389.2 | yes |
+
+**Chosen internal-tol ratio: 0.5** (largest ratio -- i.e. cheapest construction -- whose average fraction stays within 5pp of the 70.0% reference).

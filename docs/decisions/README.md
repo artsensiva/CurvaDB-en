@@ -63,3 +63,4 @@ Commits, reports (`benchmarks/results/step7.md`), reviews (`docs/reviews/`), oth
 | [0020](ADR-0020-degenerate-time-breaks-sed.md) | A degenerate time array silently breaks SED simplification (M4's trade-off curve) | Accepted |
 | [0021](ADR-0021-certificate-is-additional-not-gating.md) | Step8's reachability gate stays step3's honest-curve error; certificates are additional | Accepted |
 | [0022](ADR-0022-spline-fitter-and-lam-for-m1-m2.md) | Spline segment fitter and `lam_fallback` for M1/M2 (pre-registered rule) | Accepted |
+| [0023](ADR-0023-knot-removal-lam-and-internal-tol.md) | `knot_removal.py`'s certification `lam_fallback` and internal-tol strategy (segment-scale budget) | Accepted |

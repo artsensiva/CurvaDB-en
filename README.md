@@ -2,6 +2,9 @@
 
 Русская версия: [README.ru.md](README.ru.md)
 
+Full technical report (all steps, every ADR, all criteria and numbers, one document): see
+[docs/REPORT.md](docs/REPORT.md).
+
 The project now has two parts. The first (`step0`-`step3`, `step8`) is a completed research
 study: does storing GPS trajectories as cubic B-splines beat the classic "Douglas-Peucker (DP)
 simplification + search by discrete Fréchet distance" scheme? Bottom line: a negative result on
@@ -60,10 +63,12 @@ real, quantified trade-offs. Gate G1 (`docs/ROADMAP.md`) is open.
 Full detail: [docs/phases/step7_summary.md](docs/phases/step7_summary.md) (one-page gate
 summary), [docs/specs/step7_B_certified_store.md](docs/specs/step7_B_certified_store.md) (the
 spec), [benchmarks/results/step7.md](benchmarks/results/step7.md) (all milestone results, M0-M4),
-[docs/decisions/](docs/decisions/) (20 ADRs, the full decision history).
+[docs/decisions/](docs/decisions/) (23 ADRs, the full decision history).
 
 ## Documents
 
+- [docs/REPORT.md](docs/REPORT.md) — the full technical report: every step (`step0`-`step8`),
+  all 23 ADRs, every criterion and number, one standalone document.
 - [docs/history.md](docs/history.md) — the full project history, from
   the original idea to the resolution.
 - [docs/findings.md](docs/findings.md) — research findings: the
@@ -84,9 +89,9 @@ spec), [benchmarks/results/step7.md](benchmarks/results/step7.md) (all milestone
 - [docs/ROADMAP.md](docs/ROADMAP.md) — the step7 phase/gate roadmap (G0-G7),
   the decision log, and the risk register.
 - [docs/decisions/](docs/decisions/) — architecture decision records (ADRs)
-  for step7: 20 entries, template and index in `docs/decisions/README.md`.
-- [docs/phases/](docs/phases/) — one-page summaries written at each gate
-  (currently `step7_summary.md`, gate G1).
+  for step7/step8: 23 entries, template and index in `docs/decisions/README.md`.
+- [docs/phases/](docs/phases/) — one-page summaries written at each gate:
+  `step7_summary.md` (gate G1), `step8_summary.md` (gate G2).
 
 ## Setup
 

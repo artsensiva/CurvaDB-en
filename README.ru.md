@@ -2,6 +2,9 @@
 
 English version: [README.md](README.md)
 
+Полный технический отчёт (все этапы, все ADR, все критерии и цифры, один документ):
+[docs/ru/REPORT.md](docs/ru/REPORT.md).
+
 Проект теперь состоит из двух частей. Первая (`step0`-`step3`, `step8`) — завершённое
 исследование: даёт ли хранение GPS-траекторий кубическими B-сплайнами
 выигрыш над классической схемой "упрощение Дугласом-Пекером (DP) +
@@ -62,10 +65,12 @@ English version: [README.md](README.md)
 Подробности: [docs/phases/step7_summary.md](docs/phases/step7_summary.md) (итог на одну страницу
 по воротам), [docs/specs/step7_B_certified_store.md](docs/specs/step7_B_certified_store.md)
 (спецификация), [benchmarks/results/step7.md](benchmarks/results/step7.md) (все результаты по
-этапам M0-M4), [docs/decisions/](docs/decisions/) (20 ADR, полная история решений).
+этапам M0-M4), [docs/decisions/](docs/decisions/) (23 ADR, полная история решений).
 
 ## Документы
 
+- [docs/ru/REPORT.md](docs/ru/REPORT.md) — полный технический отчёт: каждый этап
+  (`step0`-`step8`), все 23 ADR, все критерии и цифры, один самостоятельный документ.
 - [docs/ru/history.md](docs/ru/history.md) — полная история проекта, от
   исходной идеи до резолюции.
 - [docs/ru/findings.md](docs/ru/findings.md) — итоги исследования: вопрос,
@@ -85,10 +90,10 @@ English version: [README.md](README.md)
   step3.md, step7.md).
 - [docs/ROADMAP.md](docs/ROADMAP.md) — дорожная карта фаз и ворот step7
   (G0-G7), журнал решений, реестр рисков.
-- [docs/decisions/](docs/decisions/) — архитектурные решения (ADR) по step7:
-  20 записей, шаблон и индекс в `docs/decisions/README.md`.
-- [docs/phases/](docs/phases/) — итоги на одну страницу на каждых воротах
-  (сейчас `step7_summary.md`, ворота G1).
+- [docs/decisions/](docs/decisions/) — архитектурные решения (ADR) по step7/step8:
+  23 записи, шаблон и индекс в `docs/decisions/README.md`.
+- [docs/phases/](docs/phases/) — итоги на одну страницу на каждых воротах:
+  `step7_summary.md` (ворота G1), `step8_summary.md` (ворота G2).
 
 ## Установка
 

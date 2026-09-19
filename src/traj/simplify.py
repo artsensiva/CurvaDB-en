@@ -9,6 +9,26 @@ from shapely.geometry import LineString
 DEFAULT_TOL = 10.0
 
 
+def _validate_time(t: np.ndarray, context: str) -> None:
+    """Guards the same class of bug as ADR-0014 (dense_max_error's mode/domain
+    mismatch): a function that is contractually TIME-AWARE silently returning a
+    plausible-looking but meaningless result when handed a degenerate time
+    axis, instead of failing loudly. Raises ValueError for a zero-or-negative
+    overall span (t[-1] <= t[0]) or a sequence that isn't non-decreasing
+    (a later index at an earlier time) -- both make "distance interpolated by
+    time fraction" (_seds) meaningless, not just imprecise."""
+    t = np.asarray(t, dtype=float)
+    if len(t) <= 2:
+        return  # _seds is only ever invoked for a sub-range of >= 3 points (i1-i0 >= 2)
+    if t[-1] - t[0] <= 0:
+        raise ValueError(
+            f"{context}: track.t has zero or negative span (t[0]={t[0]!r}, t[-1]={t[-1]!r}) -- "
+            "time-aware simplification needs a genuine, increasing time axis, not a placeholder"
+        )
+    if np.any(np.diff(t) < 0):
+        raise ValueError(f"{context}: track.t is not non-decreasing -- time-aware simplification requires sorted timestamps")
+
+
 def simplify(track, tol: float = DEFAULT_TOL) -> np.ndarray:
     """Simplifies a track's polyline (xy, meters) with the Douglas-Peucker algorithm.
 
@@ -56,6 +76,7 @@ def simplify_sed_with_indices(track, tol: float = DEFAULT_TOL) -> tuple[np.ndarr
     at the same tol (it also accounts for uneven spacing of points in
     time), so it usually needs more points for the same tol."""
     t, xy = track.t, track.xy
+    _validate_time(t, "simplify_sed_with_indices")
     n = len(t)
     keep = np.zeros(n, dtype=bool)
     keep[0] = keep[-1] = True

@@ -99,8 +99,15 @@ def approx_error_rates(grid: dict) -> dict:
 # --- item 2: trade-off curve (polylines only) ---------------------------------------
 
 
-def _polyline_repr(xy: np.ndarray, tol: float) -> tuple[np.ndarray | None, float | None]:
-    track = Track(track_id="q", lat=np.zeros(len(xy)), lon=np.zeros(len(xy)), t=np.zeros(len(xy)), xy=xy)
+def _polyline_repr(xy: np.ndarray, t: np.ndarray, tol: float) -> tuple[np.ndarray | None, float | None]:
+    """ADR-0020: `t` must be the track's REAL timestamps, not a placeholder --
+    simplify_sed_with_indices is time-aware (SED = synchronized Euclidean
+    distance) and, before ADR-0020's guard existed, a degenerate `t` (this
+    function used to pass `np.zeros(len(xy))`) silently broke its
+    time-synchronized interpolation instead of raising, causing systematic
+    vertex over-retention almost independent of `tol` -- exactly the "size
+    barely depends on tol" anomaly this ADR investigates and fixes."""
+    track = Track(track_id="q", lat=np.zeros(len(xy)), lon=np.zeros(len(xy)), t=t, xy=xy)
     _, kept_idx = simplify_sed_with_indices(track, tol=tol)
     if len(kept_idx) < 2:
         return None, None
@@ -118,7 +125,7 @@ def quantized_bytes(kept: np.ndarray, precision_cm: float = QUANTIZE_PRECISION_C
     return len(zlib.compress(q.tobytes(), level=9))
 
 
-def build_tradeoff_sample(tracks: list, seed: int = TRADEOFF_SEED, n_total: int = TRADEOFF_N_TRACKS, n_duplicates: int = 30) -> list[np.ndarray]:
+def build_tradeoff_sample(tracks: list, seed: int = TRADEOFF_SEED, n_total: int = TRADEOFF_N_TRACKS, n_duplicates: int = 30) -> list[tuple[np.ndarray, np.ndarray]]:
     """A plain random sample of tracks (GeoLife, different users/times) has
     essentially no pairs within r=50 m of each other at all (M3: >99.9% of
     all pairs are cheap-filter-rejected even WITH near-duplicates injected) --
@@ -126,27 +133,33 @@ def build_tradeoff_sample(tracks: list, seed: int = TRADEOFF_SEED, n_total: int 
     candidates survive the cheap filter to measure a refine rate on). Mixes
     in `n_duplicates` near-duplicates (the same controlled-translation
     generator as step7_query.py, targeting r=50 or r=200) of OTHER tracks in
-    the same sample, so both the near-duplicate and its source are present."""
+    the same sample, so both the near-duplicate and its source are present.
+
+    Returns (xy, t) pairs, not bare xy arrays (ADR-0020): a near-duplicate is
+    a spatial perturbation of its source's own points, so it reuses the
+    SOURCE's real timestamps -- matching step7_query.py's own convention
+    (_append_duplicate stores the source's `t`), not a placeholder."""
     rng = np.random.default_rng(seed)
     n_base = n_total - n_duplicates
     base_idx = rng.choice(len(tracks), size=min(n_base, len(tracks)), replace=False)
-    xy_sample = [tracks[int(i)].xy for i in base_idx]
+    sample: list[tuple[np.ndarray, np.ndarray]] = [(tracks[int(i)].xy, tracks[int(i)].t) for i in base_idx]
 
     for _ in range(n_duplicates):
-        src = xy_sample[int(rng.integers(0, len(xy_sample)))]
+        src_xy, src_t = sample[int(rng.integers(0, len(sample)))]
         target_r = float(rng.choice(TRADEOFF_RS))
         target_distance = max(1.0, target_r * float(rng.uniform(0.8, 1.2)))
-        xy_sample.append(Q.make_near_duplicate(rng, src, target_distance))
+        dup_xy = Q.make_near_duplicate(rng, src_xy, target_distance)
+        sample.append((dup_xy, src_t))
 
-    return xy_sample
+    return sample
 
 
-def run_tradeoff_curve(xy_sample: list, n_queries: int = TRADEOFF_N_QUERIES, seed: int = TRADEOFF_SEED) -> list[dict]:
+def run_tradeoff_curve(xy_t_sample: list[tuple[np.ndarray, np.ndarray]], n_queries: int = TRADEOFF_N_QUERIES, seed: int = TRADEOFF_SEED) -> list[dict]:
     results = []
     for tol in TOL_VALUES:
         entries = []
-        for xy in xy_sample:
-            kept, eps = _polyline_repr(xy, tol)
+        for xy, t in xy_t_sample:
+            kept, eps = _polyline_repr(xy, t, tol)
             entries.append({"xy": xy, "kept": kept, "eps": eps})
 
         eps_list = [e["eps"] for e in entries if e["eps"] is not None]

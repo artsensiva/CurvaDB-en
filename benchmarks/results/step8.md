@@ -356,6 +356,10 @@ question is resolved in the opposite direction from the hypothesis it was raised
 remains a genuine cost/geometry trade-off, decided by `cost(i,j)`, not a construction-availability
 default.**
 
+## M1
+
+Scope: M1's own artifact (spec section 7's milestone table) is criterion A3 alone, which spec section 8 states specifically for `sigma=0, dt=1` -- matching M0's own grid (`benchmarks/results/step8.md`'s M0 section), whose DP+SED numbers are REUSED directly below, not recomputed. Reachability for all three methods (oracle, DP+SED, LSQ-free-knot) uses the SAME criterion: honest error against the true noise-free curve on a dense grid, `<= target_tol` -- identical to step3's/M0's own gate (ADR-0021: the certificate, `certify_spline`'s `eps_A`, stays an additional, non-gating check, reported alongside as `cert_frac` below). The oracle fits directly to a DENSE true-curve sample (spec 2.6 -- no noise, no sparsity), not the sparse dt=1 samples the other two methods see. `n`/time distributions are over each method's own reachable population.
+
 ### M1.0 -- budget check (ADR-0023)
 
 **Estimate, not a measurement of M2's real runtime** (M2 doesn't exist yet; section 2.1's candidate count `m` is a labeled proxy from M0's DP+SED kept-vertex counts, not a measured quantity). Purpose: decide `knot_removal.py`'s certification `lam_fallback` *before* writing it (ADR-0023).
@@ -432,3 +436,86 @@ Reference: M0.2's average `eps_A<=tol` fraction at lam_fallback=0.001, internal 
 | 0.1 | 100.0% | 1389.2 | yes |
 
 **Chosen internal-tol ratio: 0.5** (largest ratio -- i.e. cheapest construction -- whose average fraction stays within 5pp of the 70.0% reference).
+
+### Methods (sigma=0, dt=1, 15 tracks, seed=42)
+
+| tol | method | bytes (mean) | n mean/p50/p90 | reachable | cert eps_A<=tol fraction | time p50/p90 (ms) |
+|---|---|---|---|---|---|---|
+| 0.5 | DP+SED (M0, reused) | 481B | -- | 5/15 | -- | -- |
+| 0.5 | Oracle (free knots, true curve) | 505B | 239.6/211.0/380.8 | 13/15 | 100.0% | 5405.0/14293.3 |
+| 0.5 | LSQ-free-knot (recorded track) | 606B | 333.2/316.0/469.0 | 4/15 | 100.0% | 381.1/544.2 |
+| 2 | DP+SED (M0, reused) | 470B | -- | 15/15 | -- | -- |
+| 2 | Oracle (free knots, true curve) | 392B | 164.1/148.0/238.0 | 11/15 | 100.0% | 7390.8/13649.7 |
+| 2 | LSQ-free-knot (recorded track) | 390B | 167.4/157.0/269.8 | 13/15 | 100.0% | 904.2/2025.8 |
+| 10 | DP+SED (M0, reused) | 282B | -- | 15/15 | -- | -- |
+| 10 | Oracle (free knots, true curve) | 248B | 91.0/76.0/148.6 | 10/15 | 100.0% | 6390.6/14302.7 |
+| 10 | LSQ-free-knot (recorded track) | 226B | 80.8/74.5/121.0 | 12/15 | 100.0% | 932.0/1849.1 |
+
+### Valid-cell check for A3 (spec section 8, verbatim: both COMPARED methods -- oracle, DP+SED -- reach >=80%)
+
+| tol | DP+SED reachable fraction | oracle reachable fraction | valid for A3? |
+|---|---|---|---|
+| 0.5 | 33.3% | 86.7% | no |
+| 2 | 100.0% | 73.3% | no |
+| 10 | 100.0% | 66.7% | no |
+
+### Criterion A3 (spec section 8)
+
+| # | Criterion | Threshold | Actual | Passed |
+|---|---|---|---|---|
+| A3 | oracle bytes <= 0.80 x DP+SED bytes, in >=1 valid cell (sigma=0, dt=1) | <=0.80x | no valid cells | no |
+
+**Informational only (not part of the formal criterion, since no cell is valid):** the oracle/
+DP+SED byte ratio at each tol regardless of validity -- tol=0.5: 505/481 = 1.050x; tol=2:
+392/470 = 0.834x; tol=10: 248/282 = 0.879x. Even setting the valid-cell technicality aside, **no
+tol's ratio clears 0.80x** -- the closest, tol=2, misses by 0.034x. A3 does not fail only on a
+methodological technicality; it fails substantively too.
+
+### M1 Conclusions
+
+**Why no cell is valid, and why that isn't just a technicality.** `tol=0.5` is invalid because
+DP+SED itself only reaches 33.3% (M0's own number, reused unchanged) -- unrelated to the oracle.
+`tol=2` and `tol=10` are invalid because the **oracle's own reachability never reaches 80%**
+(73.3%, 66.7%) under the mandated same-basis criterion (correction 1: honest error against the
+true curve on a dense grid, identical to DP+SED's own gate) -- despite the oracle's certified
+`eps_A<=tol` fraction being a clean **100% at every tol** (see the Methods table). This gap is a
+real, structural finding, not a bug: `certify_spline`'s certificate bounds the continuous
+**Fréchet** distance, which allows the reconstructed spline to lead or lag the true curve *in
+time* while staying close *in space* -- a legitimate Fréchet-optimal correspondence. The
+reachability check here instead uses a **fixed, time-synchronized** correspondence (step3's own
+`true_curve_error`, evaluating the spline at the SAME dense-grid timestamps the true curve is
+sampled at), which has no such freedom. Knot removal optimizes only the certified (Fréchet)
+error, so a coarser oracle fit -- more knots removed, more slack at looser `tol` -- has no reason
+to preserve time synchronization, and increasingly doesn't: reachability *drops* as `tol` grows
+(86.7% -> 73.3% -> 66.7%), the opposite of what a purely space-domain view would predict. This is
+exactly why mandatory correction 1 (same basis for all three methods) matters: a naive
+"oracle-vs-true-curve, DP+SED-vs-recorded-track" comparison would have hidden this gap entirely
+and made A3 look easier to satisfy than it actually is under a fair, consistent criterion.
+
+**A3 does not pass.** Applying spec section 8's H1 rule verbatim: *"A3 не выполнен → «H1
+закрыта: даже сплайн со свободными узлами на идеальной кривой не компактнее DP+SED на 20% в
+проверенных условиях»."* -- **H1 is closed: even a free-knot spline on the ideal (noiseless,
+dense) curve is not more compact than DP+SED by 20% under the conditions tested.** This holds
+both formally (no valid cell exists to test A3 in) and substantively (no tol's informational
+ratio clears 0.80x either, closest miss 0.834x at tol=2).
+
+**Consequence for M2 (spec section 8's "Остановка" clause, documented, not executed here):**
+*"Если после M1 A3 не выполнен -- этап M2 выполняется в сокращённом объёме (только контроль A5,
+A6), H1 закрывается, направление завершается публикацией вывода."* -- M2, if run at all, should
+be scoped to only A5/A6 (DP-dominance and corner-block checks -- implementation sanity, not H1
+evidence), not the full A1/A2 hybrid-compression campaign; H1 is closed regardless of M2's
+outcome; the direction concludes with a published finding rather than further data collection.
+
+**`n`/time distributions.** The oracle needs noticeably fewer parameters than LSQ-free-knot at
+tol=0.5 (239.6 vs. 333.2 mean `n`) but is *slower* by roughly 10-15x (5.4-7.4s vs. 0.4-0.9s
+median) -- expected, not anomalous: the oracle fits a dense true-curve sample (`_dense_grid`,
+~10 points/s) while LSQ-free-knot fits the sparse recorded track (dt=1, ~1 point/s), so both
+`spline.fit()`'s densification and every `certify_spline` call inside `remove_knots` process
+roughly 10x more points for the oracle. This full-track-oracle cost is a one-time M1 evaluation,
+not the segment-scale cost ADR-0023's budget projection is about (M2's DP works on short
+segments, not full dense tracks) -- the two are not comparable and neither invalidates the other.
+
+**Open issues:** none carried forward for A3 itself (H1 is closed); the Fréchet-vs-time-
+synchronized correspondence gap identified above is worth keeping in mind if M2 proceeds in its
+reduced A5/A6-only form, since the same gap could affect how the DP's own segment reconstructions
+are judged.

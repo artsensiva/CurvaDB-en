@@ -207,13 +207,19 @@ run with scratch scripts outside the repository, results recorded as a report, n
    tracks overshoot by kilometers, traced to specific anomalous GPS jumps in the raw GeoLife data
    (e.g. one track implies a 3.8km position jump in 3 seconds, roughly 4580 km/h) plus, on at
    least one track with no such jump, plain accumulated overshoot on dense, real, noisy samples.
-   The diagnostics file tested correlation of `log(max_dist)` against several candidate causes
-   and found it **weak everywhere (max `|r|=0.27`, with `log(n_raw)`)** -- no single dominant
-   cause. (`docs/blog_draft.md`, a narrative adaptation and not one of this report's sources,
-   states a stronger correlation, 0.69, specifically with the maximum gap between recorded
-   points; that number does not appear in `benchmarks/results/step0_diagnostics.md`, whose own
-   analysis is the one quoted above, so this report uses the results file's number, 0.27, and
-   flags the discrepancy rather than silently using the larger one.)
+   The original diagnostic pass tested correlation of `log(max_dist)` against several candidate
+   causes and found it **weak everywhere (max `|r|=0.27`, with `log(n_raw)`)** -- but that pass
+   never tested the single largest recording gap within a track (`max_dt`) as its own candidate.
+   A later pass, added during step1 (`benchmarks/results/step0_diagnostics.md` section 4, run via
+   `benchmarks/diagnose_fit.py`), tested exactly that and found `max_dt` is by far the strongest
+   correlate of `log(max_dist)`: **`r=0.69`**, against `r=0.22` for the largest single *spatial*
+   jump between consecutive raw points (`max_gap`) -- a long pause in recording, not a spatial
+   outlier, is the dominant mechanism: a time-parametrized cubic spline has nothing constraining
+   it during a long gap and can draw an arbitrary loop before rejoining the next real
+   observation. (`docs/blog_draft.md`'s narrative version of this finding quotes `0.69` for
+   `max_dt` -- matching this run almost exactly -- but `0.18` for the spatial-jump correlation;
+   the actual re-run gives `0.22`, not `0.18`, so this report uses the re-run's number and flags
+   the small discrepancy rather than silently using the blog draft's.)
 3. **The DP polyline does not have this problem.** The maximum deviation of *any* original
    point from the DP polyline (not just removed points -- literally every point) has median
    9.697m, p90 9.968m, max exactly 10.000m across all 200 tracks: 0/200 tracks exceed `tol`. This

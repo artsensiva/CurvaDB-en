@@ -139,3 +139,49 @@ distance is insensitive to the resampling density of the same (already
 distorted) curve. For step1 it makes sense to either control the
 spline's error along the whole curve (not just at the knots), or
 explicitly split tracks at GPS jumps before fitting.
+
+## 4. dt analysis (added in step1)
+
+**Added after the original diagnostics above** (§§1-3 and the Conclusion), during step1 work on
+the cause of the spline's overshoot -- not part of the initial diagnostic pass. Same 200 tracks,
+`seed=42`, `tol=10.0` m as §§1-3; produced by `benchmarks/diagnose_fit.py` (its own §4, which
+this section reproduces verbatim from a real run of that script, not from memory or a narrative
+draft).
+
+The original diagnosis (§2 above) tested correlation of `log(max_dist)` against `max_gap`,
+`min_dt`, `std_dt`, `iqr_dt`, `span_start_end`, and `log(n_raw)`, finding all of them weak (max
+`|r|=0.27`, with `log(n_raw)`) -- but **did not test `max_dt` (the single largest gap between
+consecutive timestamps within a track) as its own candidate**. Added here:
+
+```
+=== correlations (log10 max_dist vs factor) ===
+corr(log max_dist, max_gap): 0.2229384796719281
+corr(log max_dist, min_dt): 0.14912623566989053
+corr(log max_dist, max_dt): 0.691941288814573
+corr(log max_dist, std_dt): 0.5767211524389612
+corr(log max_dist, iqr_dt): 0.13640984726061772
+corr(log max_dist, span_start_end): 0.1295000400438432
+corr(log max_dist, log n_raw): 0.3121591554793641
+
+=== dt: max and spread within a track (across all 200 tracks) ===
+max_dt: median=212.00s p90=7827.50s max=21330.00s
+std_dt: median=13.18s p90=323.49s max=1882.07s
+iqr_dt: median=0.00s p90=4.00s max=47.00s
+```
+
+**`max_dt` (the largest recording gap within a track) is, by a wide margin, the strongest single
+correlate of `log(max_dist)` found in either pass: `r=0.69`** (vs. `max_gap`, the largest single
+*spatial* jump between consecutive raw points: `r=0.22`; both far above every other factor
+tested, including the `r=0.27` with `log(n_raw)` that was the strongest finding in the original
+§2 pass, which never tested `max_dt` itself). `std_dt` (the spread of gaps within a track) is
+also elevated (`r=0.58`), consistent with the same mechanism: a cubic spline parametrized by
+time, faced with a long pause in recording, has nothing to constrain it during that pause and can
+draw an arbitrary loop before rejoining the next real observation.
+
+**Reconciling with `docs/blog_draft.md`'s narrative claim** ("паузы в записи коррелировали с
+ошибкой с коэффициентом 0.69, пространственные скачки лишь с 0.18"): the `max_dt` figure matches
+this run almost exactly (0.6919 vs. the quoted 0.69). The spatial-jump figure does not: this run
+gives `max_gap`'s correlation as **0.22**, not 0.18. Per this project's rule for a numeric
+discrepancy, the freshly-run number (0.22) is the one used going forward (`docs/REPORT.md`,
+`docs/ru/REPORT.md`); the blog draft's `0.18` is superseded, not corrected in place, since the
+blog draft is a narrative document, not a results file.

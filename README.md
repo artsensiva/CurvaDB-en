@@ -46,7 +46,8 @@ real, quantified trade-offs. Gate G1 (`docs/ROADMAP.md`) is open.
   41.7 ms median per query) — even though it is slower than an *uncertified* approximate search
   on the same compressed data, a separate, documented trade-off (S6b).
 - The price of dropping the guarantee, quantified: an uncertified approximate search on the same
-  compressed data still misses **0.03-3.03%** of true answers.
+  compressed data still misses **0.03-3.03%** of true answers and returns up to **2.04%** false
+  positives.
 - A tolerance/size trade-off for the polyline representation: tightening the simplification
   enough to resolve short-range queries without reading originals costs a real **5.1x** more
   storage per track.
@@ -71,6 +72,8 @@ spec), [benchmarks/results/step7.md](benchmarks/results/step7.md) (all milestone
   experiment.
 - [docs/blog_draft.md](docs/blog_draft.md) — the text of a blog post
   for publication (for an engineering audience).
+- [docs/blog_step7.md](docs/blog_step7.md) — a follow-up blog post on
+  step7 (the certified curve store).
 - [docs/legacy.md](docs/legacy.md) — an archive of the README from
   before the pivot to trajectories (the original embeddings idea).
 - [docs/prompts/](docs/prompts/) — the step3-step5 prompts (step0-step2

@@ -1,5 +1,5 @@
 ---
-title: "Five results: I spent months proving splines don't help trajectory databases"
+title: "Five results: I spent time proving splines don't help trajectory databases"
 published: false
 description: "Storing GPS tracks as smooth curves instead of polylines sounds convincing. I tested it five ways and it never held up. The side result was better: exact similarity search over compressed trajectories, twice as fast as the exact baseline."
 tags: algorithms, datascience, database, opensource

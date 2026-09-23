@@ -28,45 +28,65 @@ conclusion) and [research findings](findings.md).
 
 ## Interview plan
 
-**Who to interview (8-10 people):** robotics (industrial and service
-manipulators), agritech with RTK navigation (autonomous machinery),
-drones (flight planning and logging), surgical robotics (recording
-instrument trajectories).
+The authoritative plan is [docs/ROADMAP.md](ROADMAP.md) section 6 -- domains, who to talk to,
+and (importantly) exactly which problem statement counts toward the threshold in each domain,
+since each domain unlocks a different product spec, not just "more evidence for H2":
 
-**Questions:**
+| Domain | Unlocks | Who | Problem that counts |
+|---|---|---|---|
+| High-precision machining | P1 (`docs/specs/P1_certipath_cnc.md`) | CNC toolpath programmers, mold/die engineers, aerospace, implants | time or surface-quality loss from segmented toolpaths and feed-rate reduction; need for a certified path-accuracy guarantee |
+| Quality control | P2 (`docs/specs/P2_certiinspect_surfaces.md`) | QC engineers, metrologists, additive manufacturing, casting | false or disputed pass/fail decisions at the tolerance boundary; distrust of grid-based computation; effort of documenting uncertainty |
+| Robotics and autonomous vehicles | P3 (`docs/specs/P3_certitrack_store.md`), P4 (`docs/specs/P4_motionshape_search.md`) | data/validation engineers, learning-from-demonstration researchers | missed similar cases when searching logs (P3); searching motions by shape independent of position (P4) |
 
-1. How do you currently store and compare trajectories (coordinates,
-   format, size per recording)?
-2. Do you need to search for similar motions/routes? If so, by what
-   "similarity" criterion (path shape, velocity, acceleration, something
-   else)?
-3. Where do you get velocity and curvature from -- dedicated sensors
-   (IMU, Doppler GNSS, encoders) or by differentiating coordinates?
-4. What's currently awkward about your existing stack (storing,
-   searching, analyzing trajectories)? Is there anything you put up with
-   as "good enough"?
+**Basic questions (asked without naming the product):**
 
-**Format:** 30-45 minutes, semi-structured interview, record verbatim
-statements of pain points (not paraphrased) -- verbatim quotes are what
-gets used for the return-to-code threshold below.
+1. Describe the last time geometry or trajectory data cost you time or money.
+2. How do you solve that today, and what's awkward about it?
+3. What happens if the computation or search result is wrong?
+4. What does that cost (machine time, scrap, engineer-hours, risk)?
+5. Have you tried existing tools, and if so, why didn't they fit?
 
-## Threshold to return to code
+**Format:** 30-45 minutes, semi-structured, record verbatim pain-point statements (not
+paraphrased) -- verbatim quotes are what gets used for the thresholds below. A problem only
+counts if the interviewee names it **themselves**, before the product is described; each
+interviewee counts once per domain; the 3-of-10 threshold (below) is checked after 10 interviews
+in a domain, or earlier only if 3 have already been reached (`docs/ROADMAP.md` section 6).
 
-At least **3 of 10** interviewees must **independently** (without a
-prompt from the interviewer) name a trajectory search or comparison
-problem, by shape or kinematics, that current tools don't solve.
-"Independently" means: stated as their own pain point, not as agreement
-with a proposed hypothesis.
+## Threshold to return to code, and what happens for each outcome
 
-If the threshold isn't reached, the project ends as a research effort
-with a published result (`docs/findings.md`, `docs/history.md`,
-`docs/blog_draft.md`), with no further experiments.
+At least **3 of 10** interviewees in a domain must **independently** (without a prompt from the
+interviewer) name a trajectory search or comparison problem, by shape or kinematics, that
+current tools don't solve. "Independently" means: stated as their own pain point, not as
+agreement with a proposed hypothesis. This is the same threshold `docs/ROADMAP.md` section 4
+(gates G4, G6, G7) uses to decide which phase runs next:
 
-## Sketch of an H2 experiment (if the threshold is reached)
+- **High-precision machining and/or quality control clear the threshold (gate G4):** the
+  corresponding product (P1 and/or P2) becomes phase 4/5's target -- P1 first if both clear (it
+  reuses the curve certificates directly, needs no OpenCASCADE, and its value can be checked in
+  simulation); the `certigeo` core (phase 3) is extracted first, since phases 4-5 depend on it.
+- **Robotics/autonomous vehicles clears the threshold for P3 specifically** (gate G6, which also
+  needs step7's S5 `>=80%` for at least one representation -- already satisfied, see
+  `docs/phases/step7_summary.md`): P3 can start as soon as phase 3 (core extraction) is done,
+  even in parallel with P1/P2's own interview process.
+- **Robotics/autonomous vehicles clears the threshold for P4 specifically** (gate G7): P4's
+  milestones M0-M2 may start on a free slot even before the threshold is confirmed; M3 onward
+  waits for it.
+- **No domain reaches the threshold:** no product phase starts, phase 3 (core extraction) has
+  nothing to justify it either, and the project ends as a research effort with a published
+  result (`docs/REPORT.md`, `docs/findings.md`, `docs/history.md`, the dev.to/Habr drafts in
+  `docs/devto_article.md`/`docs/ru/habr_article.md`), with no further experiments.
 
-Tests hypothesis H2: analytical derivatives and search over the
-curvature profile kappa(t) on exact data provide practical value for the
-task named by interviewees.
+As of this writing, no interviews have been conducted in any domain (the same gap Stage C
+flagged before any code was written, `docs/history.md`) -- this is the reason the project
+currently stands at "research complete, product phases not started," not a new finding.
+
+## Sketch of an H2 experiment (if the robotics/UAV threshold is reached)
+
+This is a separate, research-only follow-up to hypothesis H2 -- distinct from the P1-P4 product
+phases above, which (once their own thresholds clear) go straight to building the product from
+its own spec, not through a research experiment. Tests H2: do analytical derivatives and search
+over the curvature profile kappa(t) on exact data provide practical value for the task named by
+interviewees.
 
 - **Data:** KITTI (vehicle odometry/trajectories) or TUM RGB-D (camera/
   robot trajectories) -- the choice depends on which domain (transport

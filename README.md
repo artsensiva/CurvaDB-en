@@ -44,6 +44,13 @@ high-precision data too: even a free-knot spline oracle fit directly to the exac
 as research — the next step for it is not code, but industry
 interviews (see [docs/next_steps.md](docs/next_steps.md)).
 
+**Project status: the research is complete and published** — code, the full technical report,
+23 architecture decisions, and every milestone's raw results are on GitHub, with a citable DOI
+(see "Citation" above). Adaptations for external publication are drafted (`docs/devto_article.md`,
+`docs/ru/habr_article.md`) but not yet live anywhere. Phases 3-7 (extracting the `certigeo`
+core, building products P1-P4) have not started and won't until the industry interviews above
+confirm demand — see `docs/ROADMAP.md` section 8 for the exact gate-by-gate status.
+
 The second part, **step7**, is a positive result: a certified curve store that answers range
 queries over compressed trajectories with a provable guarantee on the true continuous Fréchet
 distance, cheaper than reading the originals for most candidates. Gate G1
